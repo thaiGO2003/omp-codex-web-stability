@@ -1,0 +1,71 @@
+# OMP + Codex Web Stability Fix
+
+A small recovery toolkit for Oh My Pi (OMP) sessions using the ChatGPT Web / Codex Web transport when long sessions become sluggish, freeze on `continue`, or fail with errors such as:
+
+- `chatgpt_submission_ambiguous`
+- `context_length_exceeded`
+- repeated compaction loops
+- a soft compaction that makes the context *larger* instead of smaller
+
+The failure that motivated this repo was a soft compaction that expanded a session from about 84K tokens to 172K tokens on a 90K context window. ChatGPT Web UI latency made the symptom worse, but oversized session context was the main cause.
+
+## What this changes
+
+1. Sets OMP automatic compaction preference to:
+
+   ```text
+   shake -> handoff
+   ```
+
+   This avoids falling through to `soft` compaction for this workflow.
+
+2. Optionally patches known Codex Web browser-helper installs so the ChatGPT capability DOM probe waits up to 30 seconds and the send stage waits up to 120 seconds.
+
+3. Creates timestamped backups before changing browser-helper files.
+
+The script is intentionally conservative: unknown helper layouts are reported instead of rewritten.
+
+## Install / apply
+
+```bash
+git clone https://github.com/thaiGO2003/omp-codex-web-stability.git
+cd omp-codex-web-stability
+./bin/apply.sh
+```
+
+Preview only:
+
+```bash
+./bin/apply.sh --dry-run
+```
+
+Check current state:
+
+```bash
+./bin/check.sh
+```
+
+## Recover an already bloated OMP session
+
+If the current session is already over its context window, changing future compaction settings cannot shrink the bad summary that is already in history.
+
+1. Keep the session alive in `tmux` if possible.
+2. In OMP run `/rewind` (alias of `/branch`).
+3. Rewind to the user turn immediately before the bad soft-compaction.
+4. Continue with a small prompt such as `continue`.
+5. OMP should auto-shake first and then use handoff if more context must be reclaimed.
+
+A healthy recovery should reduce the context gauge substantially and stop fresh `context_length_exceeded` / `chatgpt_submission_ambiguous` failures.
+
+See [docs/recovery.md](docs/recovery.md) for a diagnostic checklist.
+
+## Safety
+
+- No credentials, cookies, session files, or browser profiles are copied into this repo.
+- The helper patch is version-sensitive and uses exact guarded replacements.
+- Each changed helper file gets a `.pre-stability-fix-<timestamp>.bak` backup.
+- OMP configuration is changed through its official CLI rather than by editing session JSONL.
+
+## License
+
+MIT

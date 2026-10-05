@@ -1,0 +1,101 @@
+diff --git a/src/adapters/chatgpt-web/browser-worker.ts b/src/adapters/chatgpt-web/browser-worker.ts
+index dbee5e4..d003a90 100644
+--- a/src/adapters/chatgpt-web/browser-worker.ts
++++ b/src/adapters/chatgpt-web/browser-worker.ts
+@@ -1330,6 +1330,7 @@ interface ChatGptSubmissionBaseline {
+   initialTurnIdentities: readonly string[];
+   domCache: ChatGptSubmissionDomCache;
+   submittedText?: string;
++  submittedAppMentionHref?: string;
+   acceptedUserIdentity?: string;
+ }
+ 
+@@ -3173,7 +3174,7 @@ export class ChatGptBrowserWorker {
+         && identity === `group:assistant:${user.slice("group:user:".length)}`
+         && !state.turnIdentities.includes(binding.identity)
+         && state.turnIdentities.every(turn => acceptedTurns.has(turn) || turn === user || turn === identity);
+-      let matches = false;
++      let matches: boolean | "pending" = false;
+       if (replacement) {
+         const locator = page.locator(chatGptAssistantTurnSelector(identity!));
+         matches = baseline.acceptedUserIdentity
+@@ -3186,12 +3187,43 @@ export class ChatGptBrowserWorker {
+           const normalize = (text: string) => text.replace(/\r\n?/g, "\n");
+           // The bubble also contains Show more and accessibility spacing. Only its
+           // observed message-content target represents the submitted prompt.
+-          return contents.length === 1 && normalize(contents[0]!.innerText) === normalize(submitted);
+-        }, baseline.submittedText!), signal));
++          if (contents.length !== 1) return false;
++          const content = contents[0]!;
++          const observed = normalize(content.innerText);
++          const expected = normalize(submitted.text);
++          const equivalent = (actual: string) => {
++            if (actual.length !== expected.length) return false;
++            for (let index = 0; index < expected.length; index++) {
++              if (actual[index] === expected[index]) continue;
++              // Match the same directional Lexical allowance as promptTextEquivalent:
++              // NBSP can preserve repeated ASCII spaces, but cannot change single spaces.
++              if (expected[index] !== " " || actual[index] !== "\u00a0"
++                || (expected[index - 1] !== " " && expected[index + 1] !== " ")) return false;
++            }
++            return true;
++          };
++          if (equivalent(observed)) return true;
++          if (!submitted.appMentionHref) return false;
++          const mentions = content.querySelectorAll<HTMLElement>('[data-prompt-link-href^="app://"]');
++          // The saved user bubble includes the connector selected in the composer.
++          // Match its exact app identity and the entire payload, never a prompt suffix.
++          if (mentions.length === 1 && mentions[0]!.getAttribute("data-prompt-link-href") === submitted.appMentionHref) {
++            const label = normalize(mentions[0]!.innerText);
++            if (!label || !observed.startsWith(label)) return false;
++            return [1, 2].some(size => /^[ \u00a0]+$/.test(observed.slice(label.length, label.length + size))
++              && equivalent(observed.slice(label.length + size)));
++          }
++          // A saved turn first renders the literal $connector keyword, then hydrates
++          // its app mention. Keep the old binding until ownership can be proved; the
++          // existing missing-response grace still bounds this wait.
++          if (mentions.length === 0 && /^\$[\w-]+ {1,2}/.test(observed)) return "pending" as const;
++          return false;
++        }, { text: baseline.submittedText!, appMentionHref: baseline.submittedAppMentionHref }), signal));
+         // The accepted user identity (or exact submitted text) establishes ownership.
+         // Activity can replace its temporary group while still generating; requiring
+         // a completed answer here mistakes that same unfinished turn for a foreign one.
+       }
++      if (matches === "pending") return binding;
+       if (!matches) throw new Error("ChatGPT opened another user turn while the bound assistant response was detached");
+     }
+     if (!identity || identity === binding.identity) return binding;
+@@ -3679,6 +3711,13 @@ export class ChatGptBrowserWorker {
+     recoverObservation?: ChatGptObservationRecovery,
+   ): Promise<ChatGptSubmissionEvidence> {
+     const composer = await this.activeComposer(page);
++    baseline.submittedAppMentionHref = await withChatGptBrowserObservationTimeout(withBrowserTurnAbort(
++      composer.evaluate((element, appName) => {
++        const mentions = [...element.querySelectorAll('[app-mention-path^="app://"][app-mention-display-name][contenteditable="false"]')]
++          .filter(node => node.getAttribute("app-mention-display-name") === appName);
++        return mentions.length === 1 ? mentions[0]!.getAttribute("app-mention-path") ?? undefined : undefined;
++      }, this.config.appName), abortSignal,
++    ));
+     const sendButton = composer
+       .locator("xpath=ancestor::form[1]")
+       .locator(CHATGPT_SEND_BUTTON_SELECTOR);
+diff --git a/tests/browser-worker-contract.test.ts b/tests/browser-worker-contract.test.ts
+index 5d96703..69f23ef 100644
+--- a/tests/browser-worker-contract.test.ts
++++ b/tests/browser-worker-contract.test.ts
+@@ -676,6 +676,7 @@ test("an accepted Full-mode send survives one stalled DOM probe and a later MCP
+     press: async () => { sendPresses += 1; },
+   };
+   const composer = {
++    evaluate: async () => undefined,
+     locator: () => ({ locator: (selector: string) => { expect(selector).toBe(CHATGPT_SEND_BUTTON_SELECTOR); return sendButton; } }),
+   };
+   worker.activeComposer = async () => composer;
+@@ -798,6 +799,7 @@ test("Bigger Context send activation keeps the outer stage budget instead of res
+     },
+   };
+   worker.activeComposer = async () => ({
++    evaluate: async () => undefined,
+     locator: () => ({ locator: (selector: string) => { expect(selector).toBe(CHATGPT_SEND_BUTTON_SELECTOR); return sendButton; } }),
+   });
+   worker.waitForSubmissionAcceptedWithRecovery = async () => "user_turn";

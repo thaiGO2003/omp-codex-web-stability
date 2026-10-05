@@ -30,6 +30,12 @@ The failure that motivated this repo was a soft compaction that expanded a sessi
    progress, before OMP's default 300-second timeout. Heartbeats alone cannot
    keep the turn alive indefinitely. See [Message delivery timeout recovery](docs/message-delivery-timeout.md).
 
+5. Provides a browser turn rebinding fix for Codex Web 6.1.4 when ChatGPT saves
+   an Activity response and the helper reports `another user turn while the bound
+   assistant response was detached`. It preserves ownership across the selected
+   connector's rendered prefix and delayed hydration. See
+   [Browser turn rebinding](docs/browser-turn-rebinding.md).
+
 The script is intentionally conservative: unknown helper layouts are reported instead of rewritten.
 
 ## Install / apply
@@ -51,6 +57,22 @@ Check current state:
 ```bash
 ./bin/check.sh
 ```
+
+## Fix saved-turn / connector interruption
+
+```bash
+python3 bin/apply-browser-rebinding.py
+```
+
+Windows (standalone file; no Python required):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\apply-browser-rebinding.ps1
+```
+
+Download [apply-browser-rebinding.ps1](bin/apply-browser-rebinding.ps1), then close
+and reopen Codex Web while idle. This patches the browser helper; your OMP model
+roles continue to use the existing shim.
 
 ## Apply the SSE stall recovery patch
 

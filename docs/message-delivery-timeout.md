@@ -67,7 +67,8 @@ browser turn has been retired.
 
 Download `bin/apply-sse-watchdog.ps1`; it is self-contained and does not need
 Python, the cloned repository or administrator access. It requires an existing
-compatible shim and the Bun runtime used by that shim.
+compatible shim and the Bun runtime used by that shim. By default it also updates
+OMP's compaction config to `shake -> handoff`, preserving other setting values.
 
 From the folder where you saved the file:
 
@@ -90,13 +91,40 @@ finish, restart the process or service running the shim using your normal Window
 launcher, then send a new continue message. It does not change execution policy
 permanently or restart the machine.
 
+To update only OMP config, without changing or requiring a shim:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\apply-sse-watchdog.ps1 -ConfigOnly
+```
+
+The config path defaults to `%USERPROFILE%\.omp\agent\config.yml`, or an existing
+`config.yaml`. `PI_CODING_AGENT_DIR` overrides the agent directory. Use
+`-OmpConfigPath "C:\path\config.yml"` for other profiles or custom paths and
+`-BunPath "C:\path\bun.exe"` if Bun is outside PATH. The config is backed up
+as `config.yml.pre-sse-watchdog-<timestamp>.bak` before writing. A missing config
+is created with only the compaction preference; models and providers still need
+to be configured in OMP. YAML formatting/comments may change when updating.
+An already-correct config is left byte-for-byte unchanged.
+
+Use `-SkipOmpConfig` to install only the shim patch. It cannot be combined with
+`-ConfigOnly`. An invalid config or unsupported shim prevents the default run
+from writing either change. Restart OMP to load the changed compaction preference.
+
+If you get **Compatibility shim not found**, the installer could not locate an
+existing `server.ts`; it does not create the base shim. Use `-ConfigOnly` for the
+OMP compaction change, or point `-ShimDirectory` at your existing compatible shim.
+A shim installed on another Linux machine is not automatically available on
+Windows. The config-only mode does not install the SSE watchdog.
+
 The script uses syntax available in Windows PowerShell 5.1 and PowerShell 7.
 Runtime checks were run with PowerShell 7 on Linux, including paths with spaces,
-UTF-8/BOM, CRLF, dry runs, repeat installation, unknown layouts and rollback.
+UTF-8/BOM, CRLF, dry runs, repeat installation, config preservation, unknown layouts
+and rollback.
 Windows PowerShell 5.1 and a live Windows Codex Web session have not been tested.
 
 For maintainers: both installers use `fixes/sse-integration.json` and
-`fixes/sse-watchdog.ts`. After changing either source, regenerate the standalone
+`fixes/sse-watchdog.ts`; PowerShell also embeds `fixes/omp-config.ts`.
+After changing these sources, regenerate the standalone
 payload with `python3 bin/build-powershell.py`. Set `POWERSHELL_EXE` to the runtime
 path to enable the PowerShell installer tests when it is outside PATH.
 

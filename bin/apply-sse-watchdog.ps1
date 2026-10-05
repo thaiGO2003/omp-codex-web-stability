@@ -1,14 +1,20 @@
 <#
 .SYNOPSIS
-Installs SSE stall recovery into an existing OMP compatibility shim.
+Updates OMP compaction config and installs SSE recovery into an existing shim.
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\apply-sse-watchdog.ps1 -DryRun
 .EXAMPLE
 .\bin\apply-sse-watchdog.ps1 -ShimDirectory 'C:\tools\codex-chatgpt-web-omp-shim'
+.EXAMPLE
+.\apply-sse-watchdog.ps1 -ConfigOnly -OmpConfigPath 'C:\Users\me\.omp\agent\config.yml'
 #>
 [CmdletBinding()]
 param(
     [string]$ShimDirectory,
+    [string]$OmpConfigPath,
+    [string]$BunPath,
+    [switch]$ConfigOnly,
+    [switch]$SkipOmpConfig,
     [switch]$DryRun
 )
 
@@ -156,6 +162,48 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
 $moduleText += "`n"
 # END EMBEDDED WATCHDOG
 
+# BEGIN EMBEDDED CONFIG
+$configModuleText = @'
+// Serialize a real YAML mapping rather than editing it with line-based regexes.
+export function updateOmpConfig(text: string): string {
+  let value: unknown;
+  try { value = Bun.YAML.parse(text); }
+  catch { throw new Error("Cannot parse OMP config YAML; no files changed."); }
+  if (value === null || value === undefined) value = {};
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("OMP config must be a YAML mapping; no files changed.");
+  }
+  const config = value as Record<string, unknown>;
+  const current = config.compaction;
+  if (current !== undefined && current !== null && (typeof current !== "object" || Array.isArray(current))) {
+    throw new Error("compaction must be a YAML mapping; no files changed.");
+  }
+  const compaction = (current ?? {}) as Record<string, unknown>;
+  const order = compaction.methodOrder;
+  if (Array.isArray(order) && order.length === 2 && order[0] === "shake" && order[1] === "handoff") return text;
+  compaction.methodOrder = ["shake", "handoff"];
+  config.compaction = compaction;
+  let updated = Bun.YAML.stringify(config) + "\n";
+  if (text.includes("\r\n")) updated = updated.replaceAll("\n", "\r\n");
+  return updated;
+}
+
+if (import.meta.main) {
+  try {
+    const path = Bun.argv[2];
+    if (!path) throw new Error("OMP config path required");
+    const file = Bun.file(path);
+    const original = await file.exists() ? await file.text() : "";
+    const updated = updateOmpConfig(original);
+    console.log(JSON.stringify({ changed: updated !== original, content: updated }));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : "Could not prepare OMP config");
+    process.exitCode = 1;
+  }
+}
+'@
+# END EMBEDDED CONFIG
+
 function Replace-ExactlyOnce([string]$Text, [string]$Old, [string]$New) {
     $count = [regex]::Matches($Text, [regex]::Escape($Old)).Count
     if ($count -ne 1) {
@@ -164,61 +212,106 @@ function Replace-ExactlyOnce([string]$Text, [string]$Old, [string]$New) {
     return $Text.Replace($Old, $New)
 }
 
+function Get-OmpConfigChange {
+    if (-not $BunPath) {
+        $bunCommand = Get-Command bun -ErrorAction SilentlyContinue
+        if ($bunCommand) { $BunPath = $bunCommand.Source }
+        else {
+            $BunPath = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.bun/bin/bun.exe'
+        }
+    }
+    if (-not [IO.File]::Exists($BunPath)) {
+        throw 'Bun is required for YAML config updates. Supply -BunPath or use -SkipOmpConfig.'
+    }
+    if (-not $OmpConfigPath) {
+        $agentDirectory = [Environment]::GetEnvironmentVariable('PI_CODING_AGENT_DIR')
+        if (-not $agentDirectory) {
+            $agentDirectory = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.omp/agent'
+        }
+        $OmpConfigPath = Join-Path $agentDirectory 'config.yml'
+        $alternate = Join-Path $agentDirectory 'config.yaml'
+        if (-not [IO.File]::Exists($OmpConfigPath) -and [IO.File]::Exists($alternate)) {
+            $OmpConfigPath = $alternate
+        }
+    }
+    $configPath = [IO.Path]::GetFullPath($OmpConfigPath)
+    $temporaryScript = Join-Path ([IO.Path]::GetTempPath()) ("omp-config-" + [guid]::NewGuid().ToString('N') + '.ts')
+    try {
+        [IO.File]::WriteAllText($temporaryScript, $configModuleText, $utf8)
+        $preparedOutput = & $BunPath $temporaryScript $configPath
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot prepare OMP config. No installation files changed.' }
+        $prepared = ($preparedOutput -join "`n") | ConvertFrom-Json
+        if ($prepared.changed) {
+            return [pscustomobject]@{ Path = $configPath; Text = [string]$prepared.content }
+        }
+        Write-Host "OMP config already uses shake -> handoff: $configPath"
+    } finally {
+        if ([IO.File]::Exists($temporaryScript)) { [IO.File]::Delete($temporaryScript) }
+    }
+}
+
 try {
-    if (-not $ShimDirectory) {
-        $userDirectory = [Environment]::GetFolderPath('UserProfile')
-        $candidates = @((Join-Path $userDirectory '.local/share/codex-chatgpt-web-omp-shim'))
-        foreach ($envName in @('LOCALAPPDATA', 'APPDATA')) {
-            $baseDirectory = [Environment]::GetEnvironmentVariable($envName)
-            if ($baseDirectory) {
-                $candidates += Join-Path $baseDirectory 'codex-chatgpt-web-omp-shim'
-            }
-        }
-        $foundShims = @($candidates | Select-Object -Unique | Where-Object {
-            [IO.File]::Exists((Join-Path $_ 'server.ts'))
-        })
-        if ($foundShims.Count -eq 0) {
-            throw 'Existing compatibility shim not found. Supply -ShimDirectory pointing to the folder containing server.ts.'
-        }
-        if ($foundShims.Count -ne 1) {
-            throw 'Multiple compatibility shims found. Choose the running shim with -ShimDirectory.'
-        }
-        $ShimDirectory = $foundShims[0]
-    }
-
-    $serverPath = [IO.Path]::GetFullPath((Join-Path $ShimDirectory 'server.ts'))
-    if (-not [IO.File]::Exists($serverPath)) {
-        throw "Existing compatibility shim required: $serverPath"
-    }
-    $manifest = $manifestJson | ConvertFrom-Json
-    $original = [IO.File]::ReadAllText($serverPath, $utf8)
-    $updated = $original.Replace("`r`n", "`n")
-
-    if ($updated.Contains([string]$manifest.installedMarkers[0])) {
-        foreach ($marker in $manifest.installedMarkers) {
-            if (-not $updated.Contains([string]$marker)) {
-                throw 'Existing watchdog integration differs from the tested layout. No files changed.'
-            }
-        }
-    } else {
-        foreach ($replacement in $manifest.replacements) {
-            $updated = Replace-ExactlyOnce $updated $replacement.old $replacement.new
-        }
-    }
-    if ($original.Contains("`r`n")) {
-        $updated = $updated.Replace("`n", "`r`n")
-    }
-
-    $modulePath = Join-Path (Split-Path -Parent $serverPath) 'sse-watchdog.ts'
     $changes = @()
-    if ($updated -cne $original) {
-        $changes += [pscustomobject]@{ Path = $serverPath; Text = $updated }
+    if ($ConfigOnly -and $SkipOmpConfig) { throw 'ConfigOnly cannot be combined with SkipOmpConfig.' }
+    if (-not $SkipOmpConfig) {
+        $configChange = Get-OmpConfigChange
+        if ($configChange) { $changes += $configChange }
     }
-    if (-not [IO.File]::Exists($modulePath) -or [IO.File]::ReadAllText($modulePath, $utf8) -cne $moduleText) {
-        $changes += [pscustomobject]@{ Path = $modulePath; Text = $moduleText }
-    }
+    if (-not $ConfigOnly) {
+        if (-not $ShimDirectory) {
+            $userDirectory = [Environment]::GetFolderPath('UserProfile')
+            $candidates = @((Join-Path $userDirectory '.local/share/codex-chatgpt-web-omp-shim'))
+            foreach ($envName in @('LOCALAPPDATA', 'APPDATA')) {
+                $baseDirectory = [Environment]::GetEnvironmentVariable($envName)
+                if ($baseDirectory) {
+                    $candidates += Join-Path $baseDirectory 'codex-chatgpt-web-omp-shim'
+                }
+            }
+            $foundShims = @($candidates | Select-Object -Unique | Where-Object {
+                [IO.File]::Exists((Join-Path $_ 'server.ts'))
+            })
+            if ($foundShims.Count -eq 0) {
+                throw 'Compatibility shim not found. No config or shim files changed. For OMP config only, rerun with -ConfigOnly. For SSE recovery, supply -ShimDirectory pointing to an existing compatible folder containing server.ts. This script patches an existing shim; it does not install the base shim.'
+            }
+            if ($foundShims.Count -ne 1) {
+                throw 'Multiple compatibility shims found. Choose the running shim with -ShimDirectory.'
+            }
+            $ShimDirectory = $foundShims[0]
+        }
+
+        $serverPath = [IO.Path]::GetFullPath((Join-Path $ShimDirectory 'server.ts'))
+        if (-not [IO.File]::Exists($serverPath)) {
+            throw "Compatibility shim server.ts not found: $serverPath. No config or shim files changed. Use -ConfigOnly to update OMP config without a shim, or correct -ShimDirectory."
+        }
+        $manifest = $manifestJson | ConvertFrom-Json
+        $original = [IO.File]::ReadAllText($serverPath, $utf8)
+        $updated = $original.Replace("`r`n", "`n")
+
+        if ($updated.Contains([string]$manifest.installedMarkers[0])) {
+            foreach ($marker in $manifest.installedMarkers) {
+                if (-not $updated.Contains([string]$marker)) {
+                    throw 'Existing watchdog integration differs from the tested layout. No files changed.'
+                }
+            }
+        } else {
+            foreach ($replacement in $manifest.replacements) {
+                $updated = Replace-ExactlyOnce $updated $replacement.old $replacement.new
+            }
+        }
+        if ($original.Contains("`r`n")) {
+            $updated = $updated.Replace("`n", "`r`n")
+        }
+
+        $modulePath = Join-Path (Split-Path -Parent $serverPath) 'sse-watchdog.ts'
+        if ($updated -cne $original) {
+            $changes += [pscustomobject]@{ Path = $serverPath; Text = $updated }
+        }
+        if (-not [IO.File]::Exists($modulePath) -or [IO.File]::ReadAllText($modulePath, $utf8) -cne $moduleText) {
+            $changes += [pscustomobject]@{ Path = $modulePath; Text = $moduleText }
+        }
+    } # End shim preparation
     if ($changes.Count -eq 0) {
-        Write-Output 'SSE watchdog already installed (240 seconds without semantic progress).'
+        Write-Output 'Requested fixes already installed; no files changed.'
         exit 0
     }
     if ($DryRun) {
@@ -242,6 +335,10 @@ try {
                 [IO.File]::Copy($change.Path, $backupPath, $false)
                 Write-Output "Backup: $backupPath"
             }
+            $parentDirectory = Split-Path -Parent $change.Path
+            if (-not [IO.Directory]::Exists($parentDirectory)) {
+                [void][IO.Directory]::CreateDirectory($parentDirectory)
+            }
             [IO.File]::WriteAllText($change.Path, $change.Text, $utf8)
         }
     } catch {
@@ -255,7 +352,9 @@ try {
         }
         throw $installError
     }
-    Write-Output 'Installed. Once active turns finish, restart the process/service running this shim.'
+    Write-Output 'Installed. OMP config changes preserve existing model/provider settings.'
+    if (-not $SkipOmpConfig) { Write-Output 'Restart OMP to load the changed compaction preference.' }
+    if (-not $ConfigOnly) { Write-Output 'Once active turns finish, restart the process/service running this shim.' }
     Write-Output 'Then send a new continue message in OMP. No administrator access or Python is needed.'
 } catch {
     [Console]::Error.WriteLine("ERROR: $($_.Exception.Message)")

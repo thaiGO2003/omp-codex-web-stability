@@ -61,7 +61,8 @@ python3 bin/apply-sse-watchdog.py --dry-run
 python3 bin/apply-sse-watchdog.py
 ```
 
-On Windows, the standalone PowerShell installer needs no Python:
+On Windows, the standalone PowerShell installer updates OMP's compaction config
+and installs the SSE patch. It uses Bun to read YAML and needs no Python:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\apply-sse-watchdog.ps1 -DryRun
@@ -69,8 +70,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\apply-sse-watchdog.ps1
 ```
 
 You can download just [apply-sse-watchdog.ps1](bin/apply-sse-watchdog.ps1).
-It includes the patch and module. For a custom installation path, add
+It includes the patch, module and config updater. For a custom installation path, add
 `-ShimDirectory "C:\tools\codex-chatgpt-web-omp-shim"`.
+
+To update only OMP config, without requiring an existing shim:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\apply-sse-watchdog.ps1 -ConfigOnly
+```
+
+By default it updates `%USERPROFILE%\.omp\agent\config.yml` (or an existing
+`config.yaml`), backing up the original before setting
+`compaction.methodOrder` to `[shake, handoff]`. Existing model/provider values
+are preserved. Add `-OmpConfigPath "C:\path\config.yml"` for a custom config,
+`-BunPath "C:\path\bun.exe"` if Bun is outside PATH, or `-SkipOmpConfig` to
+install only the shim patch. `PI_CODING_AGENT_DIR` is also respected.
 
 Then restart the shim once active turns have finished. Full requirements and
 validation are in [docs/message-delivery-timeout.md](docs/message-delivery-timeout.md).
@@ -96,7 +110,9 @@ See [docs/recovery.md](docs/recovery.md) for a diagnostic checklist.
 - No credentials, cookies, session files, or browser profiles are copied into this repo.
 - The helper patch is version-sensitive and uses exact guarded replacements.
 - Each changed helper file gets a `.pre-stability-fix-<timestamp>.bak` backup.
-- OMP configuration is changed through its official CLI rather than by editing session JSONL.
+- The Linux script changes OMP configuration through its CLI. PowerShell parses
+  the YAML config with Bun and backs it up before writing. Changed YAML may be
+  reformatted and comments removed; session history is not edited.
 
 ## License
 

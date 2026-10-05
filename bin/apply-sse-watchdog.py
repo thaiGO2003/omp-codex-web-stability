@@ -3,31 +3,16 @@
 import argparse
 from datetime import datetime
 from pathlib import Path
+import json
 import shutil
 import sys
 
-WATCHDOG_IMPORT = 'import { guardResponseStream } from "./sse-watchdog";'
-OLD_BODY = 'const responseBody = isOmpStream ? translateResponseStream(upstream.body!) : upstream.body;'
-NEW_BODY = '''const guardedBody = isOmpStream && threadId && turnId ? guardResponseStream(upstream.body!, {
-      onStall: () => interruptNativeTurn(threadId, turnId),
-      onCancel: () => interruptNativeTurn(threadId, turnId),
-    }) : upstream.body;
-    const responseBody = isOmpStream ? translateResponseStream(guardedBody!) : guardedBody;'''
-INTERRUPT_FUNCTION = '''async function interruptNativeTurn(threadId: string | undefined, turnId: string | undefined) {
-  if (!threadId || !turnId) return;
-  const configPath = join(process.env.CODEX_CHATGPT_WEB_HOME || join(homedir(), ".codex-chatgpt-web"), "config.json");
-  const config = await Bun.file(configPath).json();
-  if (typeof config.controlToken !== "string") throw new Error("Missing local Web control token");
-  const result = await fetch(new URL("/admin/interrupt-turn", upstreamOrigin), {
-    method: "POST",
-    headers: { authorization: `Bearer ${config.controlToken}`, "content-type": "application/json" },
-    body: JSON.stringify({ threadId, turnId }),
-    signal: AbortSignal.timeout(5000),
-  });
-  if (!result.ok) throw new Error(`Native turn interruption HTTP ${result.status}`);
-  console.log("OMP interrupted native Web turn", { thread: threadId.slice(0, 8), turn: turnId.slice(0, 8), ...await result.json() });
-}
-'''
+# Both native Windows PowerShell and Python use the same guarded patch definition.
+MANIFEST = json.loads((Path(__file__).resolve().parent.parent / 'fixes/sse-integration.json').read_text())
+WATCHDOG_IMPORT = MANIFEST['installedMarkers'][0]
+OLD_BODY = MANIFEST['replacements'][-1]['old']
+NEW_BODY = MANIFEST['replacements'][-1]['new']
+INTERRUPT_FUNCTION = MANIFEST['installedMarkers'][2] + '\n'
 
 
 def replace_once(text, old, new):
@@ -40,19 +25,13 @@ def replace_once(text, old, new):
 def patched_server(text):
     # Refuse partial installs/custom integration rather than guessing boundaries.
     if WATCHDOG_IMPORT in text:
-        for marker in [NEW_BODY, INTERRUPT_FUNCTION.strip(), 'let turnId: string | undefined;',
-                       'if (typeof metadata.turn_id === "string") turnId = metadata.turn_id;']:
+        for marker in MANIFEST['installedMarkers']:
             if marker not in text:
                 raise ValueError("Existing watchdog integration differs from the tested layout; no files changed")
         return text
-    text = replace_once(text, 'import { isAbsolute } from "node:path";',
-                        'import { isAbsolute, join } from "node:path";\nimport { homedir } from "node:os";\n' + WATCHDOG_IMPORT)
-    text = replace_once(text, 'const threadTails =', INTERRUPT_FUNCTION + '\nconst threadTails =')
-    text = replace_once(text, 'let threadId = threadIdFromMetadata(headerTurnMetadata);',
-                        'let threadId = threadIdFromMetadata(headerTurnMetadata);\n    let turnId: string | undefined;')
-    text = replace_once(text, 'const metadata = JSON.parse(rewrittenTurnMetadata!);',
-                        'const metadata = JSON.parse(rewrittenTurnMetadata!);\n            if (typeof metadata.turn_id === "string") turnId = metadata.turn_id;')
-    return replace_once(text, OLD_BODY, NEW_BODY)
+    for replacement in MANIFEST['replacements']:
+        text = replace_once(text, replacement['old'], replacement['new'])
+    return text
 
 
 def install(shim_dir, dry_run=False):

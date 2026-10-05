@@ -61,6 +61,17 @@ python3 bin/apply-sse-watchdog.py --dry-run
 python3 bin/apply-sse-watchdog.py
 ```
 
+On Windows, the standalone PowerShell installer needs no Python:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\apply-sse-watchdog.ps1 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\apply-sse-watchdog.ps1
+```
+
+You can download just [apply-sse-watchdog.ps1](bin/apply-sse-watchdog.ps1).
+It includes the patch and module. For a custom installation path, add
+`-ShimDirectory "C:\tools\codex-chatgpt-web-omp-shim"`.
+
 Then restart the shim once active turns have finished. Full requirements and
 validation are in [docs/message-delivery-timeout.md](docs/message-delivery-timeout.md).
 This handles stalled-turn cleanup; ChatGPT's internal delivery failure remains

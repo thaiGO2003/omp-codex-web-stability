@@ -63,6 +63,43 @@ upstream origin. If local cancellation fails, the shim logs that failure and
 still reports the stalled stream; a failed cleanup cannot guarantee that the
 browser turn has been retired.
 
+## Windows PowerShell
+
+Download `bin/apply-sse-watchdog.ps1`; it is self-contained and does not need
+Python, the cloned repository or administrator access. It requires an existing
+compatible shim and the Bun runtime used by that shim.
+
+From the folder where you saved the file:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\apply-sse-watchdog.ps1 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\apply-sse-watchdog.ps1
+```
+
+It searches for `server.ts` under `%LOCALAPPDATA%`, `%APPDATA%`, and
+`%USERPROFILE%\.local\share` in a `codex-chatgpt-web-omp-shim` folder. If yours
+is somewhere else, specify it:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\apply-sse-watchdog.ps1 -ShimDirectory "C:\tools\codex-chatgpt-web-omp-shim"
+```
+
+The script validates the patch before writes, preserves CRLF source files, backs
+up existing files and rolls back on installation failure. Once active turns
+finish, restart the process or service running the shim using your normal Windows
+launcher, then send a new continue message. It does not change execution policy
+permanently or restart the machine.
+
+The script uses syntax available in Windows PowerShell 5.1 and PowerShell 7.
+Runtime checks were run with PowerShell 7 on Linux, including paths with spaces,
+UTF-8/BOM, CRLF, dry runs, repeat installation, unknown layouts and rollback.
+Windows PowerShell 5.1 and a live Windows Codex Web session have not been tested.
+
+For maintainers: both installers use `fixes/sse-integration.json` and
+`fixes/sse-watchdog.ts`. After changing either source, regenerate the standalone
+payload with `python3 bin/build-powershell.py`. Set `POWERSHELL_EXE` to the runtime
+path to enable the PowerShell installer tests when it is outside PATH.
+
 ## Validation
 
 ```bash

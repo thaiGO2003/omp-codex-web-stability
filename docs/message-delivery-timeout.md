@@ -116,6 +116,11 @@ OMP compaction change, or point `-ShimDirectory` at your existing compatible shi
 A shim installed on another Linux machine is not automatically available on
 Windows. The config-only mode does not install the SSE watchdog.
 
+For **OMP model roles and connection setup**, use
+`bin/setup-omp-codex-web.ps1` instead. It installs the full shim, the OMP workspace
+extension, and provider/model role configuration. See
+[Connect OMP to Codex Web on Windows](../README.md#connect-omp-to-codex-web-on-windows).
+
 The script uses syntax available in Windows PowerShell 5.1 and PowerShell 7.
 Runtime checks were run with PowerShell 7 on Linux, including paths with spaces,
 UTF-8/BOM, CRLF, dry runs, repeat installation, config preservation, unknown layouts
@@ -127,6 +132,9 @@ For maintainers: both installers use `fixes/sse-integration.json` and
 After changing these sources, regenerate the standalone
 payload with `python3 bin/build-powershell.py`. Set `POWERSHELL_EXE` to the runtime
 path to enable the PowerShell installer tests when it is outside PATH.
+The same generator embeds the Web setup from `setup-omp-codex-web.template.ps1`,
+`fixes/omp-web-config.ts` and `shim/`. Its watchdog comes from the canonical
+`fixes/sse-watchdog.ts`.
 
 ## Validation
 

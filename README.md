@@ -91,6 +91,40 @@ validation are in [docs/message-delivery-timeout.md](docs/message-delivery-timeo
 This handles stalled-turn cleanup; ChatGPT's internal delivery failure remains
 outside the patch's scope.
 
+## Connect OMP to Codex Web on Windows
+
+Use **setup-omp-codex-web.ps1** to configure the model roles and provider connection.
+This includes the full base shim, so it works without an existing compatible shim.
+Requires Bun and an installed, running Codex Web with a signed-in ChatGPT browser.
+
+```powershell
+Invoke-WebRequest "https://raw.githubusercontent.com/thaiGO2003/omp-codex-web-stability/main/bin/setup-omp-codex-web.ps1" -OutFile ".\setup-omp-codex-web.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup-omp-codex-web.ps1
+```
+
+It updates `%USERPROFILE%\.omp\agent\config.yml` and `models.yml`, backing up
+changed files. Default, vision, plan, task and web roles use GPT-5.6 Sol Web High;
+commit uses Sol Instant Auto. It preserves compaction settings and other roles
+and providers. The shim is installed under
+`%USERPROFILE%\.local\share\codex-chatgpt-web-omp-shim` and starts in a separate
+PowerShell window. Keep that window open, then restart OMP.
+
+The connection is `OMP -> http://127.0.0.1:17842/v1 -> Codex Web :17841`.
+Use `-UpstreamUrl "http://127.0.0.1:YOUR_PORT"` if Codex Web uses another port,
+`-ShimPort 17843` if the shim port is occupied, or `-AgentDirectory "C:\path\agent"`
+for a custom OMP profile. `PI_CODING_AGENT_DIR` is respected.
+`-DryRun` previews changes and `-NoStart` installs without opening the shim window.
+
+To also set the judge role to your running 9router instance, add
+`-JudgeBaseUrl "http://127.0.0.1:YOUR_ROUTER_PORT"`. Existing router authentication
+is retained; a new router provider uses `NINE_ROUTER_API_KEY` from your environment.
+Otherwise the judge role is left as configured.
+
+The installer checks whether the Codex Web API lists Sol. A reachable model API
+does not verify a complete browser turn. Runtime tests cover fresh installation,
+request forwarding, backups and rollback using PowerShell 7 on Linux; native
+Windows and a signed-in Windows ChatGPT session have not been tested here.
+
 ## Recover an already bloated OMP session
 
 If the current session is already over its context window, changing future compaction settings cannot shrink the bad summary that is already in history.

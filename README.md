@@ -4,6 +4,8 @@ A small recovery toolkit for Oh My Pi (OMP) sessions using the ChatGPT Web / Cod
 
 - `chatgpt_submission_ambiguous`
 - `context_length_exceeded`
+- `OpenAI Codex SSE stream stalled while waiting for the next event`
+- ChatGPT Web `Message delivery timed out` followed by stuck retries
 - repeated compaction loops
 - a soft compaction that makes the context *larger* instead of smaller
 
@@ -22,6 +24,11 @@ The failure that motivated this repo was a soft compaction that expanded a sessi
 2. Optionally patches known Codex Web browser-helper installs so the ChatGPT capability DOM probe waits up to 30 seconds and the send stage waits up to 120 seconds.
 
 3. Creates timestamped backups before changing browser-helper files.
+
+4. Provides a separate SSE watchdog installer for an existing OMP compatibility
+   shim. It interrupts a Web turn after 240 seconds without meaningful response
+   progress, before OMP's default 300-second timeout. Heartbeats alone cannot
+   keep the turn alive indefinitely. See [Message delivery timeout recovery](docs/message-delivery-timeout.md).
 
 The script is intentionally conservative: unknown helper layouts are reported instead of rewritten.
 
@@ -44,6 +51,20 @@ Check current state:
 ```bash
 ./bin/check.sh
 ```
+
+## Apply the SSE stall recovery patch
+
+For an existing OMP compatibility shim:
+
+```bash
+python3 bin/apply-sse-watchdog.py --dry-run
+python3 bin/apply-sse-watchdog.py
+```
+
+Then restart the shim once active turns have finished. Full requirements and
+validation are in [docs/message-delivery-timeout.md](docs/message-delivery-timeout.md).
+This handles stalled-turn cleanup; ChatGPT's internal delivery failure remains
+outside the patch's scope.
 
 ## Recover an already bloated OMP session
 

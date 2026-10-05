@@ -1,0 +1,7 @@
+{
+  "name": "omp-codex-web-stability",
+  "private": true,
+  "scripts": {
+    "test": "bun test fixes && python3 -m unittest discover -s tests -v"
+  }
+}

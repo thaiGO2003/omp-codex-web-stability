@@ -14,11 +14,13 @@ def patch_text(text, manifest):
     patches = manifest['patches']
     if all(text.count(p['new']) == 1 for p in patches):
         return text, False
-    previous = manifest.get('previousPatches', [])
-    if previous and all(text.count(p['new']) == 1 for p in previous):
-        # Upgrade the exact previously released layout in memory, before any write.
-        for patch in previous:
-            text = text.replace(patch['new'], patch['old'], 1)
+    layouts = [manifest.get('previousPatches', [])] + [layout['patches'] for layout in manifest.get('previousLayouts', [])]
+    for previous in layouts:
+        if previous and all(text.count(p['new']) == 1 for p in previous):
+            # Upgrade only a complete known release, in memory before any write.
+            for patch in previous:
+                text = text.replace(patch['new'], patch['old'], 1)
+            break
     for patch in patches:
         if text.count(patch['old']) != 1 or patch['new'] in text:
             raise ValueError('Unknown or partially patched helper layout: ' + patch['name'])

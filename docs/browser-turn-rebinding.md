@@ -56,7 +56,7 @@ installers find installed version helpers and the launcher descriptor's helper.
 For another location, pass `--helper /path/browser-helper.cjs` or
 `-HelperPath 'C:\path\browser-helper.cjs'`. They validate all targets before writing,
 create timestamped backups, preserve existing timeout patches and are idempotent.
-The exact previous toolkit release can also be upgraded in place, with a new
+Both previous toolkit releases can also be upgraded in place, with a new
 backup. Unknown or partially patched layouts are rejected.
 
 Close and reopen Codex Web when no turn is running to load the helper. Reapplying
@@ -146,3 +146,62 @@ Final combined source verification: six browser regression tests passed (106
 assertions), including all fifteen connector/layout scenarios and the existing
 ownership checks. The installed-bundle layout fixture passed its five cases (ten
 assertions), and the toolkit suite passed thirteen Bun and twenty-five Python tests.
+
+
+## Saved rich-text escaping: 2026-10-06 07:48
+
+The forest-thorne turn at 07:48 failed with `chatgpt_submitted_turn_failed`.
+Its underlying browser error was still the detached-response ownership rejection.
+The previous app-pill layout fix therefore did not cover every saved prompt.
+
+A separate read-only connection test captured its original submitted prompt and
+then read its saved user bubble on an independently leased diagnostic surface.
+The original payload had 17,706 characters. After removing the verified app label,
+its single layout LF and two separator spaces, the saved payload had 17,943.
+The entire difference consisted of 237 inserted backslashes at 235 positions.
+They occurred around Markdown punctuation, including backticks, existing
+backslashes, angle brackets, quotes, colons, underscores and asterisks.
+The rendered JSON consequently could not be compared literally to the original.
+
+Replaying that exact saved HTML and original prompt in headless Chromium reproduced
+all 17,959 visible characters, including the app prefix. The previously installed
+native helper rejected it. The updated native helper rebound to the saved reply.
+This proves a missing representation case; the completed original 07:48 turn did
+not preserve its baseline, so its exact failing gate cannot be reconstructed.
+
+The new comparison is directional and covers the complete payload. It allows only
+extra backslashes before ASCII Markdown punctuation, with at most one escape for
+each original backslash or following punctuation character. Original backslashes
+must all remain represented. It never decodes JSON escapes, removes payload
+characters, folds whitespace or matches only a nonce or prompt suffix. This
+allowance is enabled only after the saved bubble's exact selected app identity is
+verified. Accepted-user-ID and competing-turn checks retain their existing rules.
+
+Ownership rejections now include non-content diagnostics: whether the replacement
+shape was valid, whether an accepted user ID was observed and matched, whether
+an app identity was captured, and the submitted character count. No prompt text,
+capability token, connector URL or turn ID is included in these details. Temporary
+private prompt capture used for this investigation is not part of the patch.
+
+The synthetic browser fixture covers escaped punctuation and existing JSON
+backslashes, altered tasks, wrong apps, escapes before letters, changed JSON
+escapes and a 199K escaped payload. Installer tests exercise upgrades from both
+prior releases through Python and standalone PowerShell. A private real-DOM
+replay is kept out of this repository because it contains runtime task context.
+
+
+On the installed bundle, both browser fixtures passed all 22 scenarios (75
+assertions), including the 199K escaped payload. The source connector fixture
+passed after increasing its test-only limit to 60 seconds for the expanded set;
+the large source fixture and all four existing binding tests also passed. The
+repository suite passed 13 Bun tests and 25 Python tests, including PowerShell 7.
+Both installed helpers retain their earlier capability-probe and Send budgets.
+The temporary private diagnostic hooks were removed before installation.
+
+
+A fresh OMP session on GPT-5.6 Sol Web/high read a temporary marker through the
+read tool and completed normally. `omp --continue` resumed that same saved
+session, read the marker again and completed normally. Both turns had a
+successful read result, the expected final marker after Markdown display
+escaping, no assistant error and empty stderr. These isolated checks did not
+resume the user's forest-thorne session. Private prompt/DOM captures were deleted.

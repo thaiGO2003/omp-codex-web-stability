@@ -21,6 +21,9 @@ class RebindingTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(module.patch_text(patched, MANIFEST), (patched, False))
         self.assertEqual(module.patch_text(PREVIOUS, MANIFEST), (patched, True))
+        for layout in MANIFEST['previousLayouts']:
+            previous = 'header\n' + '\n'.join(p['new'] for p in layout['patches']) + '\nfooter\n'
+            self.assertEqual(module.patch_text(previous, MANIFEST), (patched, True))
         for text in ['unknown', ORIGINAL+ORIGINAL, ORIGINAL.replace(MANIFEST['patches'][0]['old'], MANIFEST['patches'][0]['new'])]:
             with self.assertRaises(ValueError):
                 module.patch_text(text, MANIFEST)
@@ -62,6 +65,10 @@ class RebindingTests(unittest.TestCase):
             subprocess.run(command,check=True,capture_output=True)
             self.assertEqual(helper.read_text(),module.patch_text(ORIGINAL,MANIFEST)[0])
             self.assertEqual(len(list(Path(directory).glob('*.bak'))),2)
+            for layout in MANIFEST['previousLayouts']:
+                helper.write_text('header\n' + '\n'.join(p['new'] for p in layout['patches']) + '\nfooter\n')
+                subprocess.run(command,check=True,capture_output=True)
+                self.assertEqual(helper.read_text(),module.patch_text(ORIGINAL,MANIFEST)[0])
             helper.write_text('unknown')
             self.assertNotEqual(subprocess.run(command,capture_output=True).returncode,0)
             self.assertEqual(helper.read_text(),'unknown')

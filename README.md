@@ -74,6 +74,8 @@ Download [apply-browser-rebinding.ps1](bin/apply-browser-rebinding.ps1), then cl
 and reopen Codex Web while idle. This patches the browser helper; your OMP model
 roles continue to use the existing shim.
 
+The saved-turn patch also handles Markdown escape backslashes added by ChatGPT's rich-text renderer; it still verifies the complete payload and selected app. See [the investigation and regression evidence](docs/browser-turn-rebinding.md).
+
 ## Apply the SSE stall recovery patch
 
 For an existing OMP compatibility shim:

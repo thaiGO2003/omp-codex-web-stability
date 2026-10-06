@@ -1,5 +1,5 @@
 diff --git a/src/adapters/chatgpt-web/browser-worker.ts b/src/adapters/chatgpt-web/browser-worker.ts
-index dbee5e4..2eb87fc 100644
+index dbee5e4..1a901b0 100644
 --- a/src/adapters/chatgpt-web/browser-worker.ts
 +++ b/src/adapters/chatgpt-web/browser-worker.ts
 @@ -1330,6 +1330,7 @@ interface ChatGptSubmissionBaseline {
@@ -19,7 +19,7 @@ index dbee5e4..2eb87fc 100644
        if (replacement) {
          const locator = page.locator(chatGptAssistantTurnSelector(identity!));
          matches = baseline.acceptedUserIdentity
-@@ -3186,12 +3187,49 @@ export class ChatGptBrowserWorker {
+@@ -3186,13 +3187,71 @@ export class ChatGptBrowserWorker {
            const normalize = (text: string) => text.replace(/\r\n?/g, "\n");
            // The bubble also contains Show more and accessibility spacing. Only its
            // observed message-content target represents the submitted prompt.
@@ -29,16 +29,34 @@ index dbee5e4..2eb87fc 100644
 +          const content = contents[0]!;
 +          const observed = normalize(content.innerText);
 +          const expected = normalize(submitted.text);
-+          const equivalent = (actual: string) => {
-+            if (actual.length !== expected.length) return false;
-+            for (let index = 0; index < expected.length; index++) {
-+              if (actual[index] === expected[index]) continue;
-+              // Match the same directional Lexical allowance as promptTextEquivalent:
-+              // NBSP can preserve repeated ASCII spaces, but cannot change single spaces.
-+              if (expected[index] !== " " || actual[index] !== "\u00a0"
-+                || (expected[index - 1] !== " " && expected[index + 1] !== " ")) return false;
++          const equivalent = (actual: string, escapedMarkdown = false) => {
++            // Saved rich-text user turns can retain the Markdown serializer's extra
++            // backslashes. Compare the whole payload directionally: only insertions
++            // before ASCII punctuation are presentation escapes. Never remove an
++            // original backslash, decode JSON escapes, or normalize payload whitespace.
++            const punctuation = (unit: string | undefined) => Boolean(unit)
++              && /[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/.test(unit!);
++            let observedIndex = 0;
++            let expectedIndex = 0;
++            while (expectedIndex < expected.length) {
++              if (escapedMarkdown && (actual[observedIndex] === "\\" || expected[expectedIndex] === "\\")) {
++                const startExpected = expectedIndex;
++                const startObserved = observedIndex;
++                while (expected[expectedIndex] === "\\") expectedIndex++;
++                while (actual[observedIndex] === "\\") observedIndex++;
++                const original = expectedIndex - startExpected;
++                const rendered = observedIndex - startObserved;
++                const maximum = 2 * original + (punctuation(expected[expectedIndex]) ? 1 : 0);
++                if (rendered < original || rendered > maximum) return false;
++                if (expectedIndex === expected.length) break;
++              }
++              if (actual[observedIndex] !== expected[expectedIndex]
++                && (expected[expectedIndex] !== " " || actual[observedIndex] !== "\u00a0"
++                  || (expected[expectedIndex - 1] !== " " && expected[expectedIndex + 1] !== " "))) return false;
++              observedIndex++;
++              expectedIndex++;
 +            }
-+            return true;
++            return observedIndex === actual.length;
 +          };
 +          if (equivalent(observed)) return true;
 +          if (!submitted.appMentionHref) return false;
@@ -55,7 +73,7 @@ index dbee5e4..2eb87fc 100644
 +            const tail = observed.slice(label.length);
 +            const payload = tail.startsWith("\n") ? tail.slice(1) : tail;
 +            return [1, 2].some(size => /^[ \u00a0]+$/.test(payload.slice(0, size))
-+              && equivalent(payload.slice(size)));
++              && equivalent(payload.slice(size), true));
 +          }
 +          // A saved turn first renders the literal $connector keyword, then hydrates
 +          // its app mention. Keep the old binding until ownership can be proved; the
@@ -67,11 +85,16 @@ index dbee5e4..2eb87fc 100644
          // Activity can replace its temporary group while still generating; requiring
          // a completed answer here mistakes that same unfinished turn for a foreign one.
        }
+-      if (!matches) throw new Error("ChatGPT opened another user turn while the bound assistant response was detached");
 +      if (matches === "pending") return binding;
-       if (!matches) throw new Error("ChatGPT opened another user turn while the bound assistant response was detached");
++      if (!matches) throw new Error("ChatGPT opened another user turn while the bound assistant response was detached"
++        + ` (replacement=${Boolean(replacement)}, acceptedUser=${Boolean(baseline.acceptedUserIdentity)},`
++        + ` sameUser=${user === baseline.acceptedUserIdentity}, appBound=${Boolean(baseline.submittedAppMentionHref)},`
++        + ` submittedChars=${baseline.submittedText?.length ?? 0})`);
      }
      if (!identity || identity === binding.identity) return binding;
-@@ -3679,6 +3717,13 @@ export class ChatGptBrowserWorker {
+     return {
+@@ -3679,6 +3738,13 @@ export class ChatGptBrowserWorker {
      recoverObservation?: ChatGptObservationRecovery,
    ): Promise<ChatGptSubmissionEvidence> {
      const composer = await this.activeComposer(page);

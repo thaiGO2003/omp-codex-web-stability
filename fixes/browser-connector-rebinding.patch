@@ -1,5 +1,5 @@
 diff --git a/src/adapters/chatgpt-web/browser-worker.ts b/src/adapters/chatgpt-web/browser-worker.ts
-index dbee5e4..d003a90 100644
+index dbee5e4..2eb87fc 100644
 --- a/src/adapters/chatgpt-web/browser-worker.ts
 +++ b/src/adapters/chatgpt-web/browser-worker.ts
 @@ -1330,6 +1330,7 @@ interface ChatGptSubmissionBaseline {
@@ -19,7 +19,7 @@ index dbee5e4..d003a90 100644
        if (replacement) {
          const locator = page.locator(chatGptAssistantTurnSelector(identity!));
          matches = baseline.acceptedUserIdentity
-@@ -3186,12 +3187,43 @@ export class ChatGptBrowserWorker {
+@@ -3186,12 +3187,49 @@ export class ChatGptBrowserWorker {
            const normalize = (text: string) => text.replace(/\r\n?/g, "\n");
            // The bubble also contains Show more and accessibility spacing. Only its
            // observed message-content target represents the submitted prompt.
@@ -48,8 +48,14 @@ index dbee5e4..d003a90 100644
 +          if (mentions.length === 1 && mentions[0]!.getAttribute("data-prompt-link-href") === submitted.appMentionHref) {
 +            const label = normalize(mentions[0]!.innerText);
 +            if (!label || !observed.startsWith(label)) return false;
-+            return [1, 2].some(size => /^[ \u00a0]+$/.test(observed.slice(label.length, label.length + size))
-+              && equivalent(observed.slice(label.length + size)));
++            // The hydrated inline app pill contains block-layout children. innerText
++            // can add one layout newline after its label although the submitted DOM
++            // text has only the composer separator spaces. Allow this boundary only;
++            // never normalize newlines or whitespace inside the submitted payload.
++            const tail = observed.slice(label.length);
++            const payload = tail.startsWith("\n") ? tail.slice(1) : tail;
++            return [1, 2].some(size => /^[ \u00a0]+$/.test(payload.slice(0, size))
++              && equivalent(payload.slice(size)));
 +          }
 +          // A saved turn first renders the literal $connector keyword, then hydrates
 +          // its app mention. Keep the old binding until ownership can be proved; the
@@ -65,7 +71,7 @@ index dbee5e4..d003a90 100644
        if (!matches) throw new Error("ChatGPT opened another user turn while the bound assistant response was detached");
      }
      if (!identity || identity === binding.identity) return binding;
-@@ -3679,6 +3711,13 @@ export class ChatGptBrowserWorker {
+@@ -3679,6 +3717,13 @@ export class ChatGptBrowserWorker {
      recoverObservation?: ChatGptObservationRecovery,
    ): Promise<ChatGptSubmissionEvidence> {
      const composer = await this.activeComposer(page);

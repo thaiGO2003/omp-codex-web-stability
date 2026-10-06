@@ -13,12 +13,14 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 MANIFEST = json.loads((ROOT/'fixes/browser-rebinding.json').read_text())
 ORIGINAL = 'header\n' + '\n'.join(p['old'] for p in MANIFEST['patches']) + '\nfooter\n'
+PREVIOUS = 'header\n' + '\n'.join(p['new'] for p in MANIFEST['previousPatches']) + '\nfooter\n'
 
 class RebindingTests(unittest.TestCase):
     def test_guards_and_idempotence(self):
         patched, changed = module.patch_text(ORIGINAL, MANIFEST)
         self.assertTrue(changed)
         self.assertEqual(module.patch_text(patched, MANIFEST), (patched, False))
+        self.assertEqual(module.patch_text(PREVIOUS, MANIFEST), (patched, True))
         for text in ['unknown', ORIGINAL+ORIGINAL, ORIGINAL.replace(MANIFEST['patches'][0]['old'], MANIFEST['patches'][0]['new'])]:
             with self.assertRaises(ValueError):
                 module.patch_text(text, MANIFEST)
@@ -56,6 +58,10 @@ class RebindingTests(unittest.TestCase):
             self.assertEqual(helper.read_text(),module.patch_text(ORIGINAL,MANIFEST)[0])
             subprocess.run(command,check=True,capture_output=True)
             self.assertEqual(len(list(Path(directory).glob('*.bak'))),1)
+            helper.write_text(PREVIOUS)
+            subprocess.run(command,check=True,capture_output=True)
+            self.assertEqual(helper.read_text(),module.patch_text(ORIGINAL,MANIFEST)[0])
+            self.assertEqual(len(list(Path(directory).glob('*.bak'))),2)
             helper.write_text('unknown')
             self.assertNotEqual(subprocess.run(command,capture_output=True).returncode,0)
             self.assertEqual(helper.read_text(),'unknown')

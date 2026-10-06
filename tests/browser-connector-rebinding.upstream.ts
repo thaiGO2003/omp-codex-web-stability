@@ -59,3 +59,51 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("submitted connector survives
     }
   } finally { await browser.close(); }
 }, 30000);
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("hydrated app pill layout preserves a 199K submitted payload across saved-turn replacement", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    if (process.env.CHATGPT_NATIVE_REBINDING_HELPER) {
+      const bundle = readFileSync(process.env.CHATGPT_NATIVE_REBINDING_HELPER, 'utf8');
+      const begin = bundle.indexOf('async reconcileAssistantTurnBinding(');
+      const end = bundle.indexOf('async attachedPromptText(', begin);
+      worker.reconcileAssistantTurnBinding = new Function('xe', 'j', 'Ia', 'Ke',
+        `return (class {${bundle.slice(begin, end)}}).prototype.reconcileAssistantTurnBinding`)(
+          (promise: unknown) => promise, (promise: unknown) => promise,
+          chatGptReboundTurnIdentity, chatGptAssistantTurnSelector,
+        );
+    }
+    const prompt = 'Act as the model backend for the Codex task encoded below.\n'
+      + 'serialized JSON preserves  two spaces and literal \\n. '.repeat(4000).slice(0,199000)
+      + '\nEnd of complete task context.';
+    for (const scenario of ['layout', 'extra-boundary-newline', 'changed-payload-newline', 'prefix-only', 'different-app'] as const) {
+      const page = await browser.newPage();
+      await page.setContent('<main></main>');
+      const baseline = await worker.captureSubmissionBaseline(page,prompt);
+      baseline.submittedAppMentionHref = 'app://fixture-connector';
+      await page.locator('main').evaluate(main => {
+        main.innerHTML = '<div data-turn-key="fallback-turn-0"><span hidden data-chatgpt-agent-turn-start></span></div>';
+      });
+      const binding = await worker.waitForNewAssistantTurn(page,baseline,Date.now()+2000);
+      await page.locator('main').evaluate((main,args) => {
+        main.innerHTML = '<div data-turn-key="saved"><div data-user-message-bubble><div data-search-result-target style="white-space:pre-wrap"><p></p></div><button>Show more</button></div><div data-conversation-role="assistant"></div><div data-markdown-text-style="assistant-message">Answer.</div><div class="turn-action-controls"><button>Copy</button></div></div>';
+        const p = main.querySelector('p')!;
+        const mention = document.createElement('span');
+        mention.setAttribute('data-prompt-link-href',args.scenario==='different-app'?'app://other':'app://fixture-connector');
+        mention.style.display='inline-flex';
+        const label=document.createElement('span');label.style.display='block';label.textContent='Codex Native2';mention.append(label);p.append(mention);
+        if(args.scenario==='extra-boundary-newline')p.append(document.createElement('br'));
+        const payload = args.scenario==='changed-payload-newline' ? args.prompt.replace('\n','\n\n')
+          : args.scenario==='prefix-only' ? args.prompt+' Extra request.' : args.prompt;
+        p.append(document.createTextNode('  '));
+        payload.split('\n').forEach((line,index)=>{if(index)p.append(document.createElement('br'));p.append(document.createTextNode(line));});
+      },{prompt,scenario});
+      expect((await page.locator('[data-search-result-target]').innerText()).startsWith('Codex Native2\n')).toBeTrue();
+      const result=worker.reconcileAssistantTurnBinding(page,baseline,binding);
+      if(scenario==='layout')expect((await result).identity).toBe('group:assistant:saved');
+      else await expect(result).rejects.toThrow();
+      await page.close();
+    }
+  } finally {await browser.close();}
+},30000);

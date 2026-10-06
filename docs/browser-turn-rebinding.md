@@ -14,7 +14,8 @@ The daemon and OMP processes remained alive.
 The helper normally proves ownership by the accepted user's ID. When Send is
 acknowledged before that user bubble exists, it instead compares the entire saved
 prompt with the submitted text. The saved prompt includes the selected app mention
-(`Codex Native2` on this installation) and one or two UI separator spaces. The old
+(`Codex Native2` on this installation) and one or two UI separator spaces. A hydrated pill with block-layout children
+also inserts a layout newline after its label in `innerText`. The old
 comparison omitted that presentation prefix. The saved bubble also briefly exposes
 a literal `$connector` keyword before the app mention hydrates.
 
@@ -26,6 +27,8 @@ competing new turn. Existing accepted-user-ID ownership checks are retained. The
 uses the same directional Lexical whitespace allowance as prompt attachment:
 NBSP may preserve repeated ASCII-space runs, but single-space changes remain
 mismatches.
+The comparison permits one layout newline only between the verified app label
+and its separator spaces; payload newlines are compared exactly.
 An unhydrated keyword defers rebinding within the existing missing-response grace;
 it does not establish ownership or cause another Send.
 
@@ -53,7 +56,8 @@ installers find installed version helpers and the launcher descriptor's helper.
 For another location, pass `--helper /path/browser-helper.cjs` or
 `-HelperPath 'C:\path\browser-helper.cjs'`. They validate all targets before writing,
 create timestamped backups, preserve existing timeout patches and are idempotent.
-Unknown or partially patched layouts are rejected.
+The exact previous toolkit release can also be upgraded in place, with a new
+backup. Unknown or partially patched layouts are rejected.
 
 Close and reopen Codex Web when no turn is running to load the helper. Reapplying
 files to a newer release requires compatible patch anchors; these scripts do not
@@ -102,3 +106,43 @@ read the same marker and reached a normal final answer. Both read checks had a
 successful read tool result, no stderr, no assistant error and a normal `stop`
 completion. These checks did not resume or modify the user's forest-thorne work.
 The health endpoint returned to zero active HTTP/browser turns afterward.
+
+## Repeated failure after the first fix: 2026-10-06 07:20
+
+The initial toolkit fix still rejected saved replies in the real forest-thorne
+session at 07:19, 07:20 and 07:25. Its short live tests had completed while the
+saved user bubble was still absent, so they had not exercised that transition.
+
+The 07:20 saved message exposed 199,417 rendered characters. Its prefix was the
+verified app label followed by LF and two ASCII spaces. Removing only that layout
+LF made the remaining rendered payload exactly equal to its canonical DOM text.
+The composer probe confirmed the selected app's exact `app-mention-path`; the app
+identity was captured correctly. The missing case was the layout LF.
+
+A headless replay of the captured HTML reproduced the recorded rendered text
+exactly. The previously installed bundle rejected it with the logged error; the
+new bundle rebound to the saved assistant. Captured task content was kept out of
+this repository. A separate 199K regression fixture uses an inline-flex app pill
+with a block child, reproducing the browser's layout newline without an account.
+It also rejects a second boundary newline, a payload newline mutation, extra
+request text and a different app identity. Both source and bundled code pass it.
+The earlier ten connector scenarios and four existing binding tests still pass.
+Linux/Python and standalone PowerShell upgrade tests pass for the previous release.
+
+The updated bundle was installed in both known Linux helper locations and its idle
+child was reloaded. A live OMP check supplied 229,291 characters of inert context
+and successfully read a marker file. This crossed OMP's compaction threshold:
+shake correctly found nothing to drop, handoff completed without an assistant
+error, and the model returned the marker with normal stop completion and no stderr.
+The handoff intentionally cancelled the previous browser turn; its diagnostic
+AbortError is distinct from the reported user-session ownership failures.
+
+`omp --continue` then resumed that handoff session, read the marker again and
+finished with normal stop completion, no assistant error and no stderr. The
+transport returned to zero active HTTP/browser turns. These live checks used a
+separate temporary session and did not modify forest-thorne task files.
+
+Final combined source verification: six browser regression tests passed (106
+assertions), including all fifteen connector/layout scenarios and the existing
+ownership checks. The installed-bundle layout fixture passed its five cases (ten
+assertions), and the toolkit suite passed thirteen Bun and twenty-five Python tests.

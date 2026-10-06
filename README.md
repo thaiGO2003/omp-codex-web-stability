@@ -33,7 +33,7 @@ The failure that motivated this repo was a soft compaction that expanded a sessi
 5. Provides a browser turn rebinding fix for Codex Web 6.1.4 when ChatGPT saves
    an Activity response and the helper reports `another user turn while the bound
    assistant response was detached`. It preserves ownership across the selected
-   connector's rendered prefix and delayed hydration. See
+   connector's rendered prefix, layout newline and delayed hydration. See
    [Browser turn rebinding](docs/browser-turn-rebinding.md).
 
 The script is intentionally conservative: unknown helper layouts are reported instead of rewritten.

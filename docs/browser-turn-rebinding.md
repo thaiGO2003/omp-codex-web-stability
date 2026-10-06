@@ -205,3 +205,62 @@ session, read the marker again and completed normally. Both turns had a
 successful read result, the expected final marker after Markdown display
 escaping, no assistant error and empty stderr. These isolated checks did not
 resume the user's forest-thorne session. Private prompt/DOM captures were deleted.
+
+
+## Nested link targets and unrecognized approvals: 2026-10-06 08:45–09:00
+
+The 08:45 trace `0b4eacac6d21-748a811a` still rejected ownership, reporting a
+valid replacement shape, no accepted user ID, a captured app identity and 97,618
+submitted characters. Its saved user bubble contained an inline `pnpm@11.25.0`
+link that also carried `data-search-result-target`. The helper counted the outer
+message target and the nested link as two independent payloads and rejected both.
+The link's block-layout label also inserted presentation LFs inside `innerText`.
+
+On a separately leased diagnostic surface, opening the saved message's editor
+and cancelling it recovered 97,618 payload characters, matching the original
+submission count. Headless replay of its exact HTML reproduced the rejection in
+the installed helper. The final candidate rebound successfully. Private runtime
+context is not included in these public fixtures.
+
+The matcher now selects only outermost targets within the user bubble. If the
+verified app and complete rendered text do not match, a single-paragraph transport
+can be compared using all its text nodes and explicit BRs, removing only the
+verified app node. It requires the paragraph to contain all the content target's
+text. Nested links remain part of the compared payload; actual line breaks,
+changed text, multiple outer content roots and competing turns remain rejected.
+
+The 08:55 and 09:00 watchdog failures were also inspected. The 09:00 saved turn
+contained a real tool-approval card with a safety warning. The current UI uses
+`@container/approval-card` and role=alert, without the old dialog/test-id markers.
+Its button labels include keyboard hints (`Allow once ⏎`, `Deny Esc`). The previous
+resolver missed the card and waited until the 240-second SSE watchdog cancelled
+it. Replaying the actual card confirmed the old resolver returned false; the new
+resolver recognized it, notified pending approval and returned the explicit
+`chatgpt_tool_approval_required` error when the human did not decide.
+
+The resolver now recognizes this card, accepts its keyboard hints, and is scoped
+to the bound assistant turn. Routine one-shot approval still follows the existing
+explicit auto-approval setting. Any visible safety-warning aside requires a human
+decision, including warnings that hydrate while the button becomes ready. Such a
+card is never automatically allowed or denied. The existing 60-second human wait
+is retained, followed by a specific non-retryable approval error instead of a
+four-minute semantic stall. Historical cards and other connectors are excluded.
+This does not override ChatGPT's safety review: the user must review and decide on
+any warning in the new active turn.
+
+For upstream tests, also copy `tests/browser-approval-card.upstream.ts` to
+`tests/browser-approval-card.test.ts`. Set `CHATGPT_NATIVE_APPROVAL_HELPER` to the
+candidate bundle to exercise its real approval function. The fixture covers new
+card structure, keyboard hints, wrong apps, permanent-only actions, initial and
+late safety warnings, human decisions, history isolation and cancellation.
+
+
+Final verification: the native candidate passed all three browser fixtures (114
+assertions), covering 25 prompt-rendering scenarios and eight approval scenarios.
+The source contract suite passed 138 tests (769 assertions); the repository suite
+passed 13 Bun tests and 25 Python tests, including real PowerShell execution and
+upgrades from the prior published layouts. Both installed helpers were upgraded
+while idle and the helper child was reloaded. A real saved OMP session then resumed,
+read its temporary marker through the read tool and completed with the expected
+marker, no assistant error and empty stderr. It included an inert pnpm email-like
+label in the prompt. This did not resume or approve the user's forest-thorne task.

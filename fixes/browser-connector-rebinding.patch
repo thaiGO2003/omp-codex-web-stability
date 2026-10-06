@@ -1,8 +1,71 @@
 diff --git a/src/adapters/chatgpt-web/browser-worker.ts b/src/adapters/chatgpt-web/browser-worker.ts
-index dbee5e4..1a901b0 100644
+index dbee5e4..a980766 100644
 --- a/src/adapters/chatgpt-web/browser-worker.ts
 +++ b/src/adapters/chatgpt-web/browser-worker.ts
-@@ -1330,6 +1330,7 @@ interface ChatGptSubmissionBaseline {
+@@ -898,7 +898,7 @@ export async function throwIfChatGptTerminalErrorAlert(scope: ChatGptTextScope):
+ }
+ 
+ export async function resolveChatGptToolConfirmation(
+-  page: Page,
++  page: Pick<Page, "locator">,
+   appName: string,
+   autoApprove: boolean,
+   signal?: AbortSignal,
+@@ -906,24 +906,29 @@ export async function resolveChatGptToolConfirmation(
+   onVisible?: () => Promise<void>,
+   onApprovalPending?: (pending: boolean) => Promise<void>,
+ ): Promise<boolean> {
+-  const dialog = page.locator('[role="dialog"], [data-testid="tool-approval-card"]')
++  const dialog = page.locator('[role="dialog"], [data-testid="tool-approval-card"], [class~="@container/approval-card"]')
+     .filter({ hasText: `Allow ChatGPT to use ${appName}?` })
+     .last();
+   if (!await dialog.isVisible().catch(() => false)) return false;
+   await onVisible?.();
+   if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+ 
+-  if (autoApprove) {
+-    // ChatGPT exposes either "Allow once" or the shorter "Allow" for the
+-    // current one-shot approval. Keep the matcher anchored so persistent
+-    // actions such as "Always allow" cannot match.
++  // A platform safety warning requires the human's decision even when routine
++  // one-shot tool approvals have been enabled. Inspect it again after the button
++  // becomes ready, because warning content can hydrate after the card shell.
++  const warningVisible = () => dialog.locator('aside[role="alert"]').last().isVisible().catch(() => false);
++  let safetyWarning = await warningVisible();
++  if (autoApprove && !safetyWarning) {
+     const allowCurrentAction = dialog
+-      .getByRole("button", { name: /^Allow(?: once)?$/ })
++      .getByRole("button", { name: /^Allow(?: once)?(?:\s*[⏎↵])?$/ })
+       .last();
+     await allowCurrentAction.waitFor({ state: "visible", timeout: 10_000 });
+     if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+-    await allowCurrentAction.press("Enter");
+-    return true;
++    safetyWarning = await warningVisible();
++    if (!safetyWarning) {
++      await allowCurrentAction.press("Enter");
++      return true;
++    }
+   }
+ 
+   let approvalError: unknown;
+@@ -938,7 +943,14 @@ export async function resolveChatGptToolConfirmation(
+ 
+     if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+     if (!await dialog.isVisible().catch(() => false)) return true;
+-    const deny = dialog.getByRole("button", { name: "Deny", exact: true }).last();
++    if (safetyWarning || await warningVisible()) {
++      throw new ChatGptWebAdapterError(
++        `ChatGPT is waiting for your approval of a ${appName} tool call and displayed a safety warning. `
++        + "Review the tool request in the ChatGPT tab and choose Allow once or Deny; then resume OMP if this turn has ended.",
++        { status: 403, errorType: "permission_error", code: "chatgpt_tool_approval_required", retryable: false },
++      );
++    }
++    const deny = dialog.getByRole("button", { name: /^Deny(?:\s+Esc)?$/ }).last();
+     await deny.waitFor({ state: "visible", timeout: 5_000 });
+     if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+     await deny.press("Enter");
+@@ -1330,6 +1342,7 @@ interface ChatGptSubmissionBaseline {
    initialTurnIdentities: readonly string[];
    domCache: ChatGptSubmissionDomCache;
    submittedText?: string;
@@ -10,7 +73,7 @@ index dbee5e4..1a901b0 100644
    acceptedUserIdentity?: string;
  }
  
-@@ -3173,7 +3174,7 @@ export class ChatGptBrowserWorker {
+@@ -3173,7 +3186,7 @@ export class ChatGptBrowserWorker {
          && identity === `group:assistant:${user.slice("group:user:".length)}`
          && !state.turnIdentities.includes(binding.identity)
          && state.turnIdentities.every(turn => acceptedTurns.has(turn) || turn === user || turn === identity);
@@ -19,7 +82,18 @@ index dbee5e4..1a901b0 100644
        if (replacement) {
          const locator = page.locator(chatGptAssistantTurnSelector(identity!));
          matches = baseline.acceptedUserIdentity
-@@ -3186,13 +3187,71 @@ export class ChatGptBrowserWorker {
+@@ -3181,18 +3194,97 @@ export class ChatGptBrowserWorker {
+           : Boolean(baseline.submittedText) && await withChatGptBrowserObservationTimeout(withBrowserTurnAbort(locator.evaluate((group, submitted) => {
+           const bubbles = group.querySelectorAll<HTMLElement>("[data-user-message-bubble]");
+           const contents = bubbles.length === 1
+-            ? bubbles[0]!.querySelectorAll<HTMLElement>("[data-search-result-target]")
++            ? [...bubbles[0]!.querySelectorAll<HTMLElement>("[data-search-result-target]")].filter(candidate => {
++              // Inline links also carry this attribute. Only the outer message
++              // content target owns the payload; nested link targets are its content.
++              const ancestor = candidate.parentElement?.closest("[data-search-result-target]");
++              return !ancestor || !bubbles[0]!.contains(ancestor);
++            })
+             : [];
            const normalize = (text: string) => text.replace(/\r\n?/g, "\n");
            // The bubble also contains Show more and accessibility spacing. Only its
            // observed message-content target represents the submitted prompt.
@@ -72,8 +146,24 @@ index dbee5e4..1a901b0 100644
 +            // never normalize newlines or whitespace inside the submitted payload.
 +            const tail = observed.slice(label.length);
 +            const payload = tail.startsWith("\n") ? tail.slice(1) : tail;
-+            return [1, 2].some(size => /^[ \u00a0]+$/.test(payload.slice(0, size))
-+              && equivalent(payload.slice(size), true));
++            if ([1, 2].some(size => /^[ \u00a0]+$/.test(payload.slice(0, size))
++              && equivalent(payload.slice(size), true))) return true;
++            // Inline link pills can also insert layout LFs in innerText. For the
++            // single-paragraph transport, read its actual text nodes and explicit
++            // BRs instead. Remove only the verified app node; every other payload
++            // character and authored line break must still compare in full.
++            const paragraphs = content.querySelectorAll("p");
++            if (paragraphs.length !== 1 || content.textContent !== paragraphs[0]!.textContent
++              || !paragraphs[0]!.contains(mentions[0]!)) return false;
++            const canonicalText = (node: Node): string => {
++              if (node === mentions[0]) return "";
++              if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
++              if (node instanceof Element && node.tagName === "BR") return "\n";
++              return [...node.childNodes].map(canonicalText).join("");
++            };
++            const canonical = normalize(canonicalText(paragraphs[0]!));
++            return [1, 2].some(size => /^[ \u00a0]+$/.test(canonical.slice(0, size))
++              && equivalent(canonical.slice(size), true));
 +          }
 +          // A saved turn first renders the literal $connector keyword, then hydrates
 +          // its app mention. Keep the old binding until ownership can be proved; the
@@ -94,7 +184,7 @@ index dbee5e4..1a901b0 100644
      }
      if (!identity || identity === binding.identity) return binding;
      return {
-@@ -3679,6 +3738,13 @@ export class ChatGptBrowserWorker {
+@@ -3679,6 +3771,13 @@ export class ChatGptBrowserWorker {
      recoverObservation?: ChatGptObservationRecovery,
    ): Promise<ChatGptSubmissionEvidence> {
      const composer = await this.activeComposer(page);
@@ -108,8 +198,17 @@ index dbee5e4..1a901b0 100644
      const sendButton = composer
        .locator("xpath=ancestor::form[1]")
        .locator(CHATGPT_SEND_BUTTON_SELECTOR);
+@@ -5359,7 +5458,7 @@ export class ChatGptBrowserWorker {
+         await throwIfChatGptTerminalErrorAlert(responseTurn.locator);
+ 
+         if (mode.localTools && await resolveChatGptToolConfirmation(
+-          page,
++          responseTurn.locator,
+           this.config.appName,
+           this.config.autoApproveToolCalls,
+           turn.abortSignal,
 diff --git a/tests/browser-worker-contract.test.ts b/tests/browser-worker-contract.test.ts
-index 5d96703..69f23ef 100644
+index 5d96703..d65e898 100644
 --- a/tests/browser-worker-contract.test.ts
 +++ b/tests/browser-worker-contract.test.ts
 @@ -676,6 +676,7 @@ test("an accepted Full-mode send survives one stalled DOM probe and a later MCP
@@ -128,3 +227,11 @@ index 5d96703..69f23ef 100644
      locator: () => ({ locator: (selector: string) => { expect(selector).toBe(CHATGPT_SEND_BUTTON_SELECTOR); return sendButton; } }),
    });
    worker.waitForSubmissionAcceptedWithRecovery = async () => "user_turn";
+@@ -3127,6 +3129,7 @@ function toolConfirmationPage(options: {
+     };
+   };
+   const dialog = {
++    locator: () => ({ last: () => ({ isVisible: async () => false }) }),
+     filter: ({ hasText }: { hasText: string }) => {
+       expect(hasText).toBe("Allow ChatGPT to use Codex Native?");
+       return dialog;

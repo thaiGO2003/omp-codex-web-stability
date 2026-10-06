@@ -20,10 +20,10 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("submitted connector survives
           chatGptReboundTurnIdentity, chatGptAssistantTurnSelector,
         );
     }
-    const prompt = 'Explain one thing.\nKeep  two spaces.\nJSON: {"note":"`code` *star* <tag>","path":"C:\\work","literal":"\\n"}';
+    const prompt = 'Explain one thing.\nKeep  two spaces.\nJSON: {"note":"`code` *star* <tag>","path":"C:\\work","literal":"\\n"} Dependency pnpm@11.25.0';
     const href = 'app://fixture-connector';
     const html = (value: string) => value.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('\n','<br>');
-    for (const scenario of ['escaped-markdown', 'escaped-changed-task', 'escaped-wrong-app', 'escaped-letter', 'changed-json-escape', 'matching', 'two-separators', 'nbsp-run', 'changed-single-space', 'hydrating', 'wrong-app', 'different-task', 'prefix-only', 'extra-app', 'competing-turn'] as const) {
+    for (const scenario of ['nested-link-layout', 'nested-link', 'duplicate-content-root', 'escaped-markdown', 'escaped-changed-task', 'escaped-wrong-app', 'escaped-letter', 'changed-json-escape', 'matching', 'two-separators', 'nbsp-run', 'changed-single-space', 'hydrating', 'wrong-app', 'different-task', 'prefix-only', 'extra-app', 'competing-turn'] as const) {
       const page = await browser.newPage();
       await page.setContent(`<main></main><form data-chatgpt-composer><div data-composer-markdown contenteditable="true" role="textbox" style="height:40px"><span app-mention-path="${href}" app-mention-display-name="Codex Native2" contenteditable="false">Codex Native2</span> ${html(prompt)}</div><button type="submit">Send</button></form>`);
       const baseline = await worker.captureSubmissionBaseline(page, prompt);
@@ -44,15 +44,18 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("submitted connector survives
         : scenario === 'changed-json-escape' ? savedText.replace('\\n"}', '\\t"}') : savedText;
       const gap = scenario === 'two-separators' ? '  ' : ' ';
       let content = `${mention}${gap}${html(renderedText)}`;
+      if (scenario === 'nested-link-layout' || scenario === 'nested-link') content = content.replace('pnpm@11.25.0','<a data-search-result-target href="mailto:pnpm@11.25.0">pnpm@11.25.0</a>');
+      if (scenario === 'nested-link-layout') content = content.replace('>pnpm@11.25.0</a>','><span style="display:block">pnpm@11.25.0</span></a>');
       if (scenario === 'nbsp-run') content = content.replace('Keep  two', 'Keep\u00a0 two');
       if (scenario === 'changed-single-space') content = content.replace('Explain one', 'Explain\u00a0one');
       if (scenario === 'extra-app') content = mention + content;
       if (scenario === 'hydrating') content = '$codex-native2  ' + html(text);
       let replacement = `<div data-turn-key="saved"><div data-user-message-bubble><div data-search-result-target style="white-space:pre-wrap"><p>${content}</p></div><button>Show more</button></div><div data-conversation-role="assistant"></div><div data-markdown-text-style="assistant-message">Answer.</div><div class="turn-action-controls"><button>Copy</button></div></div>`;
+      if (scenario === 'duplicate-content-root') replacement = replacement.replace('</p></div>','</p></div><div data-search-result-target>Unrelated root.</div>');
       if (scenario === 'competing-turn') replacement += '<div data-turn-key="other"><div data-user-message-bubble>Other</div></div>';
       await page.locator('main').evaluate((main, html) => { main.innerHTML = html; }, replacement);
       const result = worker.reconcileAssistantTurnBinding(page, baseline, binding);
-      if (scenario === 'escaped-markdown' || scenario === 'matching' || scenario === 'two-separators' || scenario === 'nbsp-run') {
+      if (scenario === 'nested-link-layout' || scenario === 'nested-link' || scenario === 'escaped-markdown' || scenario === 'matching' || scenario === 'two-separators' || scenario === 'nbsp-run') {
         expect((await result).identity).toBe('group:assistant:saved');
       } else if (scenario === 'hydrating') {
         expect(await result).toBe(binding);

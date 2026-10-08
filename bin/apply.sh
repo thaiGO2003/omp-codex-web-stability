@@ -50,7 +50,7 @@ import sys
 p = Path(sys.argv[1])
 s = p.read_text(errors="strict")
 selector = "already-30s" if "selectorTimeoutMs??30000" in s else ("patchable-5s" if "selectorTimeoutMs??5000" in s else "unknown")
-send = "already-120s" if "send:120000" in s else ("patchable-60s" if "send:60000" in s else "unknown")
+send = "already-120s" if "send:120000" in s else ("patchable-60s" if "send:60000" in s else ("patchable-20s" if "send:20000" in s else "unknown"))
 print(f"  selector timeout: {selector}")
 print(f"  send timeout:     {send}")
 PY
@@ -82,12 +82,15 @@ else:
     print("  selector timeout: already 30s")
 
 if "send:120000" not in s:
-    old = "send:60000"
-    if old in s:
+    candidates = [marker for marker in ["send:20000", "send:60000"] if marker in s]
+    if len(candidates) > 1:
+        raise SystemExit("refusing send patch: multiple budget markers")
+    old = candidates[0] if candidates else None
+    if old:
         if s.count(old) != 1:
             raise SystemExit(f"refusing send patch: expected 1 match, got {s.count(old)}")
         s = s.replace(old, "send:120000")
-        changed.append("send timeout 60s -> 120s")
+        changed.append("send timeout " + ("20s" if old == "send:20000" else "60s") + " -> 120s")
     else:
         print("  send timeout: unknown layout; left unchanged")
 else:

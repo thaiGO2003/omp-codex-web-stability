@@ -58,6 +58,23 @@ Check current state:
 ./bin/check.sh
 ```
 
+## Fix Send timeout after a Codex Web update
+
+An update can replace the locally patched helper and restore the shorter Send
+budget. To restore 120 seconds in known helper layouts:
+
+```bash
+python3 bin/apply-send-timeout.py
+```
+
+Windows (standalone, no Python):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\apply-send-timeout.ps1
+```
+
+Reload Codex Web while idle. See [the 6.1.6 logs and limits of this fix](docs/send-budget-upgrade.md).
+
 ## Fix saved-turn / connector interruption
 
 ```bash

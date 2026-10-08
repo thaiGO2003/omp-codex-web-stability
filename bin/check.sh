@@ -29,7 +29,7 @@ import sys
 p = Path(sys.argv[1])
 s = p.read_text(errors="replace")
 selector = "30s" if "selectorTimeoutMs??30000" in s else ("5s" if "selectorTimeoutMs??5000" in s else "unknown")
-send = "120s" if "send:120000" in s else ("60s" if "send:60000" in s else "unknown")
+send = "120s" if "send:120000" in s else ("60s" if "send:60000" in s else ("20s" if "send:20000" in s else "unknown"))
 print(p)
 print(f"  selector timeout: {selector}")
 print(f"  send timeout:     {send}")

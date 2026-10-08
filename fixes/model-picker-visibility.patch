@@ -1,0 +1,14 @@
+diff --git a/src/adapters/chatgpt-web/model-selection.ts b/src/adapters/chatgpt-web/model-selection.ts
+index 1c45097..2bc0267 100644
+--- a/src/adapters/chatgpt-web/model-selection.ts
++++ b/src/adapters/chatgpt-web/model-selection.ts
+@@ -36,7 +36,8 @@ export async function selectChatGptModelFamily(
+     if (await powerView.count() === 1) {
+       const view = await powerView.getAttribute("data-model-picker-view");
+       if (view === "simple") {
+-        const trigger = powerView.locator('[data-model-picker-view-toggle="true"][aria-hidden="false"]');
++        // Current pickers put aria-hidden on the containing view, not the toggle.
++        const trigger = powerView.locator('[data-model-picker-view-toggle="true"]:not([aria-hidden="true"]):not([inert] *):not([aria-hidden="true"] *)').filter({ visible: true });
+         if (await trigger.count() !== 1) throw familyError(family);
+         await trigger.click({ timeout: 5_000 });
+       } else if (view !== "advanced") throw familyError(family);

@@ -74,6 +74,8 @@ Download [apply-browser-rebinding.ps1](bin/apply-browser-rebinding.ps1), then cl
 and reopen Codex Web while idle. This patches the browser helper; your OMP model
 roles continue to use the existing shim.
 
+The installer also fixes `model_version_unavailable` when the current picker places visibility on the parent view instead of its model-list toggle. It still verifies the requested model and effort before Send.
+
 The saved-turn patch also handles Markdown escape backslashes added by ChatGPT's rich-text renderer; it still verifies the complete payload and selected app. It also handles nested link targets and the current tool-approval card. Safety warnings remain human decisions and are reported explicitly. See [the investigation and regression evidence](docs/browser-turn-rebinding.md).
 
 ## Apply the SSE stall recovery patch

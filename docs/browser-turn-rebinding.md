@@ -264,3 +264,43 @@ while idle and the helper child was reloaded. A real saved OMP session then resu
 read its temporary marker through the read tool and completed with the expected
 marker, no assistant error and empty stderr. It included an inert pnpm email-like
 label in the prompt. This did not resume or approve the user's forest-thorne task.
+
+## Model 5.6 selection failure: 2026-10-08
+
+Four turns between 07:33 and 07:35 (Asia/Ho_Chi_Minh) failed with
+`model_version_unavailable` before sending their pending messages. The live picker
+still listed `GPT-5.6 Sol`. Its model-list toggle no longer carried
+`aria-hidden="false"`; that state was on the surrounding active view. The helper
+required the attribute on the toggle itself and rejected the picker before opening
+its model list.
+
+The model-list selector now accepts the visible toggle in its owned active menu,
+excluding an explicitly hidden toggle and toggles beneath `aria-hidden="true"`
+or `inert` ancestors. Missing or duplicate active toggles still fail before Send.
+The selected radio, complete model evidence and requested effort remain verified.
+No language or model-role config change is required for this observed layout.
+
+The same regression fails against the previously installed native helper and
+passes against the guarded replacement. Its six cases cover parent visibility,
+the earlier toggle attribute, hidden nodes, duplicate toggles and a foreign menu;
+the draft remains unchanged and Send is never activated. A live browser check
+selected and verified `5.6 Sol High` using the patched source.
+
+Both the Python and standalone PowerShell installers include this additional
+replacement and upgrade the earlier approval-card release while preserving its
+existing patches. The source diff is `fixes/model-picker-visibility.patch`.
+Copy `tests/model-picker-parent-visibility.upstream.ts` into the upstream tests
+folder and run with `CHATGPT_DOM_TEST_BROWSER` set. To check a native helper,
+also set `CHATGPT_NATIVE_MODEL_HELPER` to its path.
+
+Validation on the affected installation: the existing model/effort suites passed
+15 tests; the new source and native-helper regression each passed all six cases
+(18 assertions). The installer tests passed on Python and PowerShell 7, including
+upgrades, backups and idempotence. The guarded patch was installed in both 6.1.4
+helper copies, retaining the 120-second Send and 30-second capability-probe fixes.
+The idle helper child was reloaded without stopping the daemon.
+
+A separate OMP session completed an initial request with `MODELSELECTIONOK` using
+GPT-5.6 Sol Web / High. `omp --continue` then called `read` on a temporary marker,
+received `MODELSELECTIONREADOK` and finished normally. Both runs had empty stderr
+and no assistant errors. The user's project session was not resumed by these checks.

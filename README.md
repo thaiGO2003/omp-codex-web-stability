@@ -40,6 +40,44 @@ The script is intentionally conservative: unknown helper layouts are reported in
 
 ## Install / apply
 
+### Windows: double-click installer
+
+1. Install OMP and Bun, then open Codex Web and sign in to ChatGPT.
+2. Download the [repository ZIP](https://github.com/thaiGO2003/omp-codex-web-stability/archive/refs/heads/main.zip) and **extract it**.
+3. Double-click **[install.bat](install.bat)** in the extracted folder. Administrator access and Python are not required. The window stays open so you can read the result.
+
+The bundled **[install.ps1](install.ps1)** also works when downloaded alone. It
+installs the full compatibility shim with the SSE watchdog, configures OMP model
+roles and providers, sets compaction to `shake -> handoff`, and restores the
+120-second Send budget plus the 30-second selector probe where supported.
+The saved-turn, approval-card and model-picker patch is applied only to known
+6.1.4 installs; it is skipped on 6.1.6 and newer. Unknown layouts are reported.
+Changed files get timestamped backups. Other model roles and provider credentials
+are preserved; the default connection uses local ports 17842 -> 17841.
+
+From PowerShell, preview or customize the installation:
+
+```powershell
+.\install.bat -DryRun
+.\install.bat -JudgeBaseUrl "http://127.0.0.1:20218"
+.\install.bat -UpstreamUrl "http://127.0.0.1:17841" -ShimPort 17843 -NoStart
+```
+
+`-BunPath`, `-AgentDirectory`, `-ShimDirectory`, `-HelperPath` and
+`-SkipBrowserFixes` are also supported. A custom helper path receives the guarded
+timeout fix; rebinding additionally requires a `6.1.4-*/app/browser-helper.cjs`
+installation path. `-DryRun` leaves installation files unchanged and starts no
+shim. Existing shim processes are not interrupted; restart their window after
+active turns finish. Close/reopen Codex Web while idle and restart OMP to load
+the changes. Bun and a signed-in, running Codex Web are prerequisites; this
+bundle installs the bridge and fixes rather than those applications.
+
+The bundle does not configure a Windows memory guard. Running out of RAM can
+still interrupt a browser turn. PowerShell 7 integration tests run on Linux;
+Windows PowerShell 5.1 and double-click execution need native Windows validation.
+
+### Linux
+
 ```bash
 git clone https://github.com/thaiGO2003/omp-codex-web-stability.git
 cd omp-codex-web-stability
@@ -190,6 +228,12 @@ See [docs/recovery.md](docs/recovery.md) for a diagnostic checklist.
 - The Linux script changes OMP configuration through its CLI. PowerShell parses
   the YAML config with Bun and backs it up before writing. Changed YAML may be
   reformatted and comments removed; session history is not edited.
+
+To refresh the standalone Windows bundle after editing the source scripts:
+
+```bash
+python3 bin/build-powershell.py
+```
 
 ## License
 

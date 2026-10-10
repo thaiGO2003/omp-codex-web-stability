@@ -6,6 +6,7 @@ A small recovery toolkit for Oh My Pi (OMP) sessions using the ChatGPT Web / Cod
 - `context_length_exceeded`
 - `OpenAI Codex SSE stream stalled while waiting for the next event`
 - ChatGPT Web `Message delivery timed out` followed by stuck retries
+- ChatGPT Web `Failed to fetch` with no automatic recovery
 - repeated compaction loops
 - a soft compaction that makes the context *larger* instead of smaller
 
@@ -37,6 +38,21 @@ The failure that motivated this repo was a soft compaction that expanded a sessi
    [Browser turn rebinding](docs/browser-turn-rebinding.md).
 
 The script is intentionally conservative: unknown helper layouts are reported instead of rewritten.
+
+## Fix Failed to fetch without losing the OMP session
+
+The new [6.1.7 fetch recovery patch](docs/fetch-recovery.md) recognizes failed
+ChatGPT conversation requests and retries eligible turns inside the same OMP
+request. It revokes the old tool capability, retires the old browser execution,
+then opens a replacement ChatGPT chat with the existing context. It makes at
+most two retries, waiting 2 seconds and then 5 seconds.
+
+Recovery is limited to turns with no output or tool activity. Already executed
+tools, authentication errors, oversized context, ambiguous Send and user
+cancellation do not trigger resubmission. These scripts support the known
+**Codex Web 6.1.7 linux-x64** bundles; the existing Windows installer does not
+include this new patch. Follow the linked instructions to patch a writable
+packaged runtime and preserve its integrity manifest.
 
 ## Install / apply
 

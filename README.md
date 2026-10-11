@@ -47,9 +47,12 @@ request. It revokes the old tool capability, retires the old browser execution,
 then opens a replacement ChatGPT chat with the existing context. It makes at
 most two retries, waiting 2 seconds and then 5 seconds.
 
-Recovery is limited to turns with no output or tool activity. Already executed
-tools, authentication errors, oversized context, ambiguous Send and user
-cancellation do not trigger resubmission. These scripts support the known
+Recovery requires no output or new tool calls in the current native HTTP round.
+After a completed tool batch, it can restore a broken browser execution only
+when the request includes every known tool result; it preserves those results
+instead of replaying the tools. Missing results, races, authentication errors,
+oversized context, ambiguous Send and user cancellation prevent recovery.
+Terminal recovery errors stop OMP's generic network retry loop. These scripts support the known
 **Codex Web 6.1.7 linux-x64** bundles; the existing Windows installer does not
 include this new patch. Follow the linked instructions to patch a writable
 packaged runtime and preserve its integrity manifest.

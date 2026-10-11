@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Retry failed pre-output browser turns inside the same OMP/API request."""
+"""Recover browser failures before output or at a completed tool boundary."""
 import argparse
 from datetime import datetime
 import hashlib
@@ -114,6 +114,76 @@ if marker + classification not in source:
     if source.count(marker) != 1:
         raise SystemExit('Unknown platform rejection handler; no files changed')
     source = source.replace(marker, marker + classification)
+changes[path] = source
+# A browser execution spans several native HTTP rounds. Completed results from
+# the preceding round must be available before replacing a broken execution.
+source = changes[path]
+start = source.index('function chatGptFetchRecoveryEligible(')
+end = source.index('function x_(', start)
+decision_start = source.find('function chatGptFetchRecoveryDecision(')
+if decision_start >= 0:
+    if decision_start > start:
+        raise SystemExit('Unknown continuation recovery layout; no files changed')
+    start = decision_start
+decision = '''function chatGptFetchRecoveryDecision(session,error,originalError,roundKey,incoming,parsed){
+let no=reason=>({eligible:false,reason});
+if(chatGptPlatformToolBlocked(error)||chatGptPlatformToolBlocked(originalError))return no("platform_rejection");
+if(incoming.abortSignal?.aborted)return no("cancelled");
+if(parsed._compactionRequest)return no("compaction");
+if(session.runtime.manualControl)return no("manual_control");
+let missing=error?.code==="chatgpt_submitted_turn_failed"&&originalError?.message==="ChatGPT accepted the message but did not expose its assistant turn in the DOM"&&session.runtime.submission?.phase==="accepted";
+if(error?.code!=="chatgpt_fetch_failed"&&error?.code!=="upstream_server_error"&&!missing)return no("other_error");
+if(session.roundEvents(roundKey).some(event=>["text_delta","thinking_delta","tool_call","tool_call_start","tool_call_delta","tool_call_end"].includes(event.type)))return no("round_output");
+let pending=session.outstanding(),progress=session.runtime.mode==="tools"?session.runtime.externalProgress?.snapshot():undefined;
+if(session.runtime.mode==="tools"&&!progress)return no("missing_progress");
+let known=new Set([...(session.deliveredResultIds??[]),...pending.map(call=>call.callId)]),boundary=false;
+if(known.size>0&&progress&&progress.lastToolBatchRevision>0){
+if([...known].some(id=>typeof id!=="string"||!id))return no("unknown_tool_id");
+let results=new Map;
+for(let message of parsed.context?.messages??[])if(message.role==="toolResult"&&known.has(message.toolCallId))results.set(message.toolCallId,(results.get(message.toolCallId)??0)+1);
+if([...known].some(id=>results.get(id)!==1))return no("incomplete_tool_results");
+if(progress.activeToolCalls!==0&&progress.activeToolCalls!==pending.length)return no("active_tools");
+boundary=true;
+}
+if(pending.length&&!boundary)return no("pending_tools");
+if(session.runtime.text.value().length&&!boundary)return no("uncommitted_text");
+if(progress&&(progress.lastToolBatchRevision!==0||progress.activeToolCalls!==0)&&!boundary)return no("tool_progress");
+return{eligible:true,reason:boundary?"completed_tool_boundary":"before_output"};
+}function chatGptFetchRecoveryEligible(session,error,originalError,roundKey,incoming,parsed){
+return chatGptFetchRecoveryDecision(session,error,originalError,roundKey,incoming,parsed).eligible;
+}'''.replace('\n', '')
+source = source[:start] + decision + source[end:]
+start = source.index('if(fetchRecoveryAttempts<2&&chatGptFetchRecoveryEligible(')
+previous_decision = 'let fetchDecision=chatGptFetchRecoveryDecision(O,oe,re,U,y,f);'
+if source[:start].endswith(previous_decision):
+    start -= len(previous_decision)
+end = source.index('let C=oe instanceof q&&oe.retryable?', start)
+branch = '''let fetchDecision=chatGptFetchRecoveryDecision(O,oe,re,U,y,f);
+if(fetchRecoveryAttempts<2&&chatGptFetchRecoveryEligible(O,oe,re,U,y,f)){
+let batchRevision=O.runtime.externalProgress?.snapshot().lastToolBatchRevision;
+await O.runtime.retireCapability?.();
+let afterRevoke=O.runtime.externalProgress?.snapshot().lastToolBatchRevision;
+if(chatGptFetchRecoveryEligible(O,oe,re,U,y,f)&&afterRevoke===batchRevision){
+await De.retireAndWait(be,y.abortSignal);
+if(y.abortSignal?.aborted)throw new DOMException("ChatGPT web turn aborted","AbortError");
+if(chatGptFetchRecoveryEligible(O,oe,re,U,y,f)&&O.runtime.externalProgress?.snapshot().lastToolBatchRevision===batchRevision){
+fetchRecoveryAttempts++;fetchRecoveryRequested=true;Hn.clear(D);
+console.warn(`[chatgpt-web] fetch-recovery ${fetchRecoveryAttempts}/2: revoked old capability and retired browser execution (${oe.code}, ${fetchDecision.reason})`);
+return;
+}
+fetchDecision={eligible:false,reason:"retirement_race"};
+}else fetchDecision={eligible:false,reason:"revocation_race"};
+}
+if(oe?.code==="chatgpt_fetch_failed"||(oe?.code==="upstream_server_error"&&fetchDecision.eligible)){
+let reason=fetchRecoveryAttempts>=2&&fetchDecision.eligible?"attempt_budget_exhausted":fetchDecision.reason;
+console.warn(`[chatgpt-web] fetch-recovery stopped: ${JSON.stringify({reason,attempts:fetchRecoveryAttempts,code:oe.code})}`);
+oe.code="chatgpt_recovery_stopped";oe.message=`ChatGPT browser recovery stopped (${reason}). Tool outcomes already received by OMP remain in its session. See local recovery diagnostics.`;
+oe.status=409;oe.errorType="invalid_request_error";oe.retryable=false;
+De.retire(be,O);
+}
+if(oe?.code==="upstream_server_error"&&["accepted","send_activated"].includes(O.runtime.submission?.phase))oe.retryable=false;
+'''.replace('\n', '')
+source = source[:start] + branch + source[end:]
 changes[path] = source
 for name in ('cli.js', 'browser-helper.cjs'):
     path = root / 'app' / name

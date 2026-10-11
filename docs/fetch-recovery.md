@@ -19,12 +19,27 @@ retirement. It allows two retries with 2-second and 5-second backoff.
 Heartbeat events continue during recovery. Exhaustion is reported as a terminal
 error so a separate client retry loop cannot multiply the attempts.
 
-Automatic resubmission is excluded when output, a tool batch, active tools or
-pending tools exist. Authentication, context-size errors, ambiguous Send,
-manual mode, compaction and cancellation are excluded. An upstream error after
-tool execution also cannot open a client resend loop. This patch does not repair
+Recovery is excluded when the current native HTTP round has emitted text,
+thinking or any native tool-call event (`tool_call_start/delta/end` included).
+At a completed tool boundary, historical commentary and tool activity from
+earlier rounds no longer prevent recovery: the new request must contain exactly
+one result for every known delivered or outstanding tool ID. Successful and
+errored tool results are both preserved. Missing, duplicate or unrelated results
+cannot authorize a replacement. Other active calls and batch revisions that
+change during capability revocation or physical retirement also prevent replay.
+
+Authentication, context-size errors, ambiguous Send, manual mode, compaction
+and cancellation are excluded. An upstream error with unaccounted tool activity
+also cannot open a client resend loop. This patch does not repair
 an upstream outage or automatically restart a task whose error was already
 delivered before installation.
+
+When recovery is unsafe or its two replacement attempts are exhausted, the
+bridge emits `chatgpt_recovery_stopped` and logs a reason without request content.
+It removes the failed browser execution from the replay cache. OMP's generic
+error classifier recognizes the old `network_error` wording even when
+`retryable: false`, so terminal messages use distinct wording as well as a
+distinct code. This prevents ten client retries against the same failed turn.
 
 Explicit platform tool rejections in an error object or its cause chain are
 classified as `chatgpt_platform_tool_blocked` (HTTP 403, non-retryable). They
@@ -71,11 +86,19 @@ assistant wait, cancellation guard, retry handler and retry loop:
 ```bash
 bun tests/verify-fetch-failure.ts "$runtime"
 bun tests/verify-fetch-retry.ts "$runtime"
+bun tests/verify-fetch-continuation.ts "$runtime"
 ```
 
-They cover 48 detection/cancellation scenarios and 29 recovery scenarios,
+They cover 48 detection/cancellation scenarios and 44 recovery scenarios,
 including stale alerts, unrelated requests, size rejection, successful SSE,
 retry exhaustion, abort during backoff, tool activity and a tool/revocation race.
+Eight additional scenarios run the actual compiled native `runTurn` handler and
+session journal with fixture browser/broker transports. They reproduce a
+settled browser error before delivery of a completed tool result, preserve the
+full context on replacement, and reject missing results, current-round output,
+revocation/retirement races and platform rejections. The installed OMP provider
+and generic error classifier also confirm that terminal recovery does not enter
+the outer network retry loop.
 Installer tests also cover dry-run, manifest integrity, backup placement,
 idempotence, upgrade of the previous recovery helper, and rejection of an
 invalid second bundle before any file changes.
@@ -94,3 +117,17 @@ turns, retained the previous marker on continuation and completed a final-build
 check. All 6,030 installed manifest records matched. An actual upstream fetch
 failure was not forced during this smoke; recovery was validated with
 deterministic faults in the compiled handler tests.
+
+The October 11 AionUI incident occurred after a `find` tool batch: the browser
+failed at 04:03:24 UTC, OMP received the errored tool result at 04:03:30 UTC, then
+replayed the same failure ten times. The previous guard required all browser
+execution tool counters to be zero and had no completed-boundary recovery path.
+The continuation regression suite specifically covers that ordering. Network
+failure is injected in local transport fixtures; it was not forced in the live
+ChatGPT browser during validation.
+
+After installation, a real isolated OMP smoke wrote one marker, received an
+intentional `bash` exit-7 tool error, then completed `bash` and `read`
+verification. The marker occurred exactly once. This validates ordinary
+continuation after an errored tool result on the installed runtime; network
+replacement is validated separately with the compiled transport fault tests.

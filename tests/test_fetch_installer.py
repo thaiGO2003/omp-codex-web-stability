@@ -96,7 +96,7 @@ class FetchInstallerTests(unittest.TestCase):
         self.assertEqual(len(list(backups.rglob('cli.js'))), 2)
         self.assertEqual((self.runtime / 'unchanged.txt').read_bytes(), original['unchanged.txt'])
         bun = os.environ.get('BUN_EXE', 'bun')
-        for script in ('verify-fetch-failure.ts', 'verify-fetch-retry.ts'):
+        for script in ('verify-fetch-failure.ts', 'verify-fetch-retry.ts', 'verify-fetch-continuation.ts'):
             result = subprocess.run([bun, str(ROOT / 'tests' / script), str(self.runtime)], capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
 

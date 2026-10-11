@@ -110,3 +110,25 @@ providerTest("actual OMP parser treats a structured platform rejection as termin
   expect(result.stopReason).toBe("error");
   expect(result.errorMessage).toContain("blocked by OpenAI");
 });
+
+providerTest("exhausted browser recovery does not enter OMP's generic network retry loop", async () => {
+  const { streamOpenAICodexResponses } = await import(providerPath);
+  const AIError = await import(join(modulesRoot, "@oh-my-pi/pi-ai/src/error/index.ts"));
+  const { getBundledModels } = await import(catalogPath);
+  const model = { ...getBundledModels("openai-codex")[0], id: "chatgpt-web/gpt-5.6-sol", provider: "codex-chatgpt-web", baseUrl: "http://127.0.0.1:9999/v1" };
+  const previous = "Codex response failed: ChatGPT conversation request failed in the browser (network_error). The prompt may already have reached ChatGPT. (code=chatgpt_fetch_failed, status=failed)";
+  expect(AIError.retriable(AIError.classifyMessage({ api: model.api, errorMessage: previous }))).toBe(true);
+  const event = { type: "error", code: "chatgpt_recovery_stopped", status: 409, retryable: false,
+    message: "ChatGPT browser recovery stopped (attempt_budget_exhausted). Tool outcomes already received by OMP remain in its session. See local recovery diagnostics." };
+  let requests = 0;
+  const result = await streamOpenAICodexResponses(model, {
+    messages: [{ role: "user", content: "Test", timestamp: Date.now() }],
+  }, {
+    apiKey: "local-test", preferWebsockets: false,
+    fetch: async () => { requests++; return new Response(frame(event), { headers: { "content-type": "text/event-stream" } }); },
+  }).result();
+  expect(requests).toBe(1);
+  expect(result.stopReason).toBe("error");
+  expect(result.errorMessage).toContain("chatgpt_recovery_stopped");
+  expect(AIError.retriable(AIError.classifyMessage(result))).toBe(false);
+});

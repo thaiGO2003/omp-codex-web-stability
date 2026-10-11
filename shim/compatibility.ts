@@ -142,6 +142,22 @@ export function addCodexEnvironment(
     activeUserIndex += 1;
   }
 
+  const evidenceInstruction = {
+    type: "message",
+    id: stableMessageId("omp-tool-evidence-v1", threadId),
+    role: "developer",
+    content: [{ type: "input_text", text: [
+      "Report tool outcomes from the actual tool result. Distinguish a successful read from an attempted edit, a failed tool invocation, and a patch that was never submitted.",
+      "Earlier assistant statements or quoted error messages are conversation history, not evidence that a current tool call failed. If platform rejection details are unavailable, say the cause is unverified.",
+      "Before claiming that a patch changed a file or made no changes, inspect the current diff or file contents; existing changes may belong to another agent. Preserve successful tool results and existing edits.",
+      "Honor an explicit platform tool rejection. Report the affected operation and available error details; do not resubmit it automatically or suggest that local Always allow/YOLO overrides platform controls.",
+    ].join("\n") }],
+  };
+  if (!input.some(value => record(value)?.id === evidenceInstruction.id)) {
+    input.splice(activeUserIndex, 0, evidenceInstruction);
+    activeUserIndex += 1;
+  }
+
   const environment = {
     type: "message",
     id: stableMessageId("omp-environment", threadId, turnId, activeUser.id, cwd),

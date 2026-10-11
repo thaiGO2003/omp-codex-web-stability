@@ -86,6 +86,35 @@ else:
             raise SystemExit('Unknown recovery exhaustion handler')
         source = source.replace(marker, exhausted + marker)
 changes[path] = source
+# Upgrade both fresh installs and the previous recovery helper. Inspect error
+# objects only: assistant text and quoted conversation history are not errors.
+source = changes[path]
+start = source.index('function chatGptFetchRecoveryEligible(')
+end = source.index('function x_(', start)
+if end < start or source[start:end].count('function ') != 1:
+    raise SystemExit('Unknown recovery helper layout; no files changed')
+platform_helper = '''function chatGptPlatformToolBlocked(error){
+for(let depth=0;error&&typeof error==="object"&&depth<4;depth++,error=error.cause){
+if(error.code==="chatgpt_platform_tool_blocked"||error.code==="content_filter")return true;
+if(typeof error.message==="string"&&/blocked by OpenAI|couldn['’]t determine the safety status of the request/i.test(error.message))return true;
+}
+return false;
+}'''.replace('\n', '')
+if 'function chatGptPlatformToolBlocked(' not in source:
+    source = source[:start] + platform_helper + source[start:]
+marker = 'function chatGptFetchRecoveryEligible(session,error,originalError,roundKey,incoming,parsed){'
+guard = 'if(chatGptPlatformToolBlocked(error)||chatGptPlatformToolBlocked(originalError))return false;'
+if marker + guard not in source:
+    source = source.replace(marker, marker + guard)
+marker = 'let oe=x_(O,re);'
+classification = ('if(chatGptPlatformToolBlocked(oe)||chatGptPlatformToolBlocked(re))'
+                  '{oe.code="chatgpt_platform_tool_blocked";oe.retryable=false;'
+                  'oe.errorType="permission_error";oe.status=403;}')
+if marker + classification not in source:
+    if source.count(marker) != 1:
+        raise SystemExit('Unknown platform rejection handler; no files changed')
+    source = source.replace(marker, marker + classification)
+changes[path] = source
 for name in ('cli.js', 'browser-helper.cjs'):
     path = root / 'app' / name
     source = changes.get(path, path.read_text())

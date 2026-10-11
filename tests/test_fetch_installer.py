@@ -105,3 +105,25 @@ class FetchInstallerTests(unittest.TestCase):
         (self.runtime / 'app/cli.js').write_bytes((Path(VENDOR) / 'app/cli.js').read_bytes())
         self.save_manifest()
         self.rejected_unchanged('patch-fetch-failure.py')
+
+    @unittest.skipUnless(VENDOR, 'Set CODEX_WEB_617_RUNTIME to test against unmodified vendor bundles')
+    def test_upgrades_previous_recovery_helper_without_duplicate_patch(self):
+        for name in ('cli.js', 'browser-helper.cjs'):
+            (self.runtime / 'app' / name).write_bytes((Path(VENDOR) / 'app' / name).read_bytes())
+        self.save_manifest()
+        for script in ('patch-fetch-failure.py', 'patch-fetch-retry.py'):
+            result = self.run_patch(script)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        cli = self.runtime / 'app/cli.js'
+        expected = cli.read_text()
+        start = expected.index('function chatGptPlatformToolBlocked(')
+        end = expected.index('function chatGptFetchRecoveryEligible(', start)
+        legacy = expected[:start] + expected[end:]
+        legacy = legacy.replace('if(chatGptPlatformToolBlocked(error)||chatGptPlatformToolBlocked(originalError))return false;', '')
+        legacy = legacy.replace('if(chatGptPlatformToolBlocked(oe)||chatGptPlatformToolBlocked(re)){oe.code="chatgpt_platform_tool_blocked";oe.retryable=false;oe.errorType="permission_error";oe.status=403;}', '')
+        cli.write_text(legacy)
+        self.save_manifest()
+        result = self.run_patch('patch-fetch-retry.py')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(cli.read_text(), expected)
+        self.assertEqual(json.loads((self.runtime / 'manifest.json').read_text()), manifest(self.runtime))

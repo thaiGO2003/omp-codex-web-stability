@@ -54,6 +54,10 @@ cancellation do not trigger resubmission. These scripts support the known
 include this new patch. Follow the linked instructions to patch a writable
 packaged runtime and preserve its integrity manifest.
 
+For reported platform tool blocks, see [tool outcome evidence](docs/tool-outcome-evidence.md).
+The shim distinguishes tool results from assistant claims in its guidance;
+explicit platform rejections are terminal and excluded from network recovery.
+
 ## Install / apply
 
 ### Windows: double-click installer

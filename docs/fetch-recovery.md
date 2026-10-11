@@ -26,6 +26,13 @@ tool execution also cannot open a client resend loop. This patch does not repair
 an upstream outage or automatically restart a task whose error was already
 delivered before installation.
 
+Explicit platform tool rejections in an error object or its cause chain are
+classified as `chatgpt_platform_tool_blocked` (HTTP 403, non-retryable). They
+cannot enter the transport recovery loop, even if initially wrapped as an
+`upstream_server_error` or `chatgpt_fetch_failed`. This check never scans
+assistant output or quoted history. Local OMP approval settings do not override
+platform controls.
+
 ## Apply
 
 Requires Python 3 and the known **6.1.7 linux-x64** bundles. Unknown versions,
@@ -66,11 +73,12 @@ bun tests/verify-fetch-failure.ts "$runtime"
 bun tests/verify-fetch-retry.ts "$runtime"
 ```
 
-They cover 48 detection/cancellation scenarios and 23 recovery scenarios,
+They cover 48 detection/cancellation scenarios and 29 recovery scenarios,
 including stale alerts, unrelated requests, size rejection, successful SSE,
 retry exhaustion, abort during backoff, tool activity and a tool/revocation race.
 Installer tests also cover dry-run, manifest integrity, backup placement,
-idempotence and rejection of an invalid second bundle before any file changes.
+idempotence, upgrade of the previous recovery helper, and rejection of an
+invalid second bundle before any file changes.
 To run those tests against an unmodified vendor runtime without changing it:
 
 ```bash

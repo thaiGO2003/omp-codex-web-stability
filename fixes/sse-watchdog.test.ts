@@ -86,3 +86,27 @@ providerTest("actual OMP parser receives an explicit error instead of its own id
   expect(result.errorMessage).toContain("ChatGPT Web made no semantic progress");
   expect(result.errorMessage).not.toContain("SSE stream stalled");
 });
+
+providerTest("actual OMP parser treats a structured platform rejection as terminal", async () => {
+  const { streamOpenAICodexResponses, isRetryableCodexFailureEvent } = await import(providerPath);
+  const { getBundledModels } = await import(catalogPath);
+  const model = { ...getBundledModels("openai-codex")[0], id: "chatgpt-web/gpt-5.6-sol", provider: "codex-chatgpt-web", baseUrl: "http://127.0.0.1:9999/v1" };
+  const event = {
+    type: "error", code: "chatgpt_platform_tool_blocked", retryable: false,
+    message: "This tool call was blocked by OpenAI because we couldn't determine the safety status of the request.",
+  };
+  expect(isRetryableCodexFailureEvent(event)).toBe(false);
+  let requests = 0;
+  const result = await streamOpenAICodexResponses(model, {
+    messages: [{ role: "user", content: "Test", timestamp: Date.now() }],
+  }, {
+    apiKey: "local-test", preferWebsockets: false,
+    fetch: async () => {
+      requests++;
+      return new Response(frame(event), { headers: { "content-type": "text/event-stream" } });
+    },
+  }).result();
+  expect(requests).toBe(1);
+  expect(result.stopReason).toBe("error");
+  expect(result.errorMessage).toContain("blocked by OpenAI");
+});

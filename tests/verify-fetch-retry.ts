@@ -5,11 +5,11 @@ const root = process.argv[2];
 if (!root) throw Error('Pass runtime directory');
 const source = readFileSync(`${root}/app/cli.js`, 'utf8');
 new Bun.Transpiler({ loader: 'js' }).transformSync(source);
-const helperStart = source.indexOf('function chatGptFetchRecoveryEligible(');
+const helperStart = source.indexOf('function chatGptPlatformToolBlocked(');
 const helperEnd = source.indexOf('function x_(', helperStart);
 assert(helperStart >= 0 && helperEnd > helperStart);
 const eligible = new Function(`${source.slice(helperStart, helperEnd)};return chatGptFetchRecoveryEligible`)();
-const branchStart = source.indexOf('if(fetchRecoveryAttempts<2&&chatGptFetchRecoveryEligible(');
+const branchStart = source.indexOf('if(chatGptPlatformToolBlocked(oe)||chatGptPlatformToolBlocked(re))');
 const branchEnd = source.indexOf('let C=oe instanceof q&&oe.retryable?', branchStart);
 assert(branchStart >= 0 && branchEnd > branchStart);
 const branch = source.slice(branchStart, branchEnd);
@@ -18,7 +18,7 @@ const loopEnd = source.indexOf('finally{clearInterval(T)}', loopStart) + 'finall
 assert(loopStart >= 0 && loopEnd > loopStart);
 const loop = source.slice(loopStart, loopEnd);
 
-for (const scenario of ['recover-first', 'recover-second', 'persistent', 'persistent-upstream', 'upstream-after-tools', 'missing-assistant', 'upstream-error', 'tools-ran', 'tools-active', 'pending-tool', 'output', 'thinking', 'cancelled', 'abort-delay', 'abort-retirement', 'revoke-race', 'revoke-failure', 'manual', 'compaction', 'ambiguous', 'auth', 'context-limit', 'other-DOM-error']) {
+for (const scenario of ['recover-first', 'recover-second', 'persistent', 'persistent-upstream', 'upstream-after-tools', 'missing-assistant', 'upstream-error', 'tools-ran', 'tools-active', 'pending-tool', 'output', 'thinking', 'cancelled', 'abort-delay', 'abort-retirement', 'revoke-race', 'revoke-failure', 'manual', 'compaction', 'ambiguous', 'auth', 'context-limit', 'other-DOM-error', 'platform-upstream', 'platform-fetch', 'platform-cause', 'platform-code', 'platform-before-send', 'quoted-history']) {
   const operations: string[] = [], delays: number[] = [];
   let terminal = 0, successes = 0, cleared = 0;
   const controller = new AbortController();
@@ -26,7 +26,7 @@ for (const scenario of ['recover-first', 'recover-second', 'persistent', 'persis
   if (scenario === 'cancelled') controller.abort();
   const O = {
     runtime: {
-      mode: 'tools', manualControl: scenario === 'manual', submission: { phase: scenario === 'ambiguous' ? 'send_activated' : 'accepted' },
+      mode: 'tools', manualControl: scenario === 'manual', submission: { phase: scenario === 'platform-before-send' ? 'prepared' : scenario === 'ambiguous' ? 'send_activated' : 'accepted' },
       text: { value: () => scenario === 'output' ? 'Existing answer' : '' },
       externalProgress: { snapshot: () => ({ ...progress }) },
       retireCapability: async () => {
@@ -37,14 +37,24 @@ for (const scenario of ['recover-first', 'recover-second', 'persistent', 'persis
     },
     outstanding: () => scenario === 'pending-tool' ? [{}] : [],
     roundEvents: () => scenario === 'thinking' ? [{ type: 'thinking_delta' }] : [],
+    context: { messages: [{ role: 'assistant', content: 'This tool call was blocked by OpenAI because we could not determine its safety status.' }] },
   };
   const oe = { message: 'fixture upstream failure', retryable: scenario.startsWith('upstream-') || scenario === 'persistent-upstream', code: ['missing-assistant', 'ambiguous', 'other-DOM-error'].includes(scenario) ? 'chatgpt_submitted_turn_failed'
     : scenario === 'auth' ? 'chatgpt_session_expired' : scenario === 'context-limit' ? 'context_length_exceeded'
     : ['upstream-error', 'persistent-upstream', 'upstream-after-tools'].includes(scenario) ? 'upstream_server_error' : 'chatgpt_fetch_failed' };
   const re = Error(scenario === 'other-DOM-error' ? 'Some unrelated DOM timeout' : 'ChatGPT accepted the message but did not expose its assistant turn in the DOM');
+  if (scenario.startsWith('platform-')) {
+    oe.retryable = true;
+    oe.code = scenario === 'platform-code' ? 'content_filter' : scenario === 'platform-fetch' ? 'chatgpt_fetch_failed' : 'upstream_server_error';
+    if (scenario === 'platform-cause') {
+      (re as any).cause = Error("This tool call was blocked by OpenAI because we couldn't determine the safety status of the request.");
+    } else if (scenario !== 'platform-code') {
+      oe.message = "This tool call was blocked by OpenAI because we couldn't determine the safety status of the request.";
+    }
+  }
   const y = { abortSignal: controller.signal }, f = { _compactionRequest: scenario === 'compaction' };
   const failedAttempts = scenario === 'recover-second' ? 2 : scenario.startsWith('persistent') ? 20 : 1;
-  const execute = new Function('chatGptFetchRecoveryEligible', 'O', 'oe', 're', 'U', 'y', 'f', 'De', 'be', 'Hn', 'D', 'eo', 'setTimeout', 'P', 'T', 'clearInterval', 'console', 'onAttempt', 'onTerminal', 'onSuccess', `return (async()=>{
+  const execute = new Function('chatGptFetchRecoveryEligible', 'chatGptPlatformToolBlocked', 'O', 'oe', 're', 'U', 'y', 'f', 'De', 'be', 'Hn', 'D', 'eo', 'setTimeout', 'P', 'T', 'clearInterval', 'console', 'onAttempt', 'onTerminal', 'onSuccess', `return (async()=>{
     let fetchRecoveryAttempts=0,fetchRecoveryRequested=false,calls=0;
     let B=async()=>{calls++;onAttempt();if(calls<=${failedAttempts}){${branch}onTerminal();return;}onSuccess();};
     ${loop}
@@ -52,7 +62,8 @@ for (const scenario of ['recover-first', 'recover-second', 'persistent', 'persis
   })()`);
   let result: any, failure: any;
   try {
-    result = await execute(eligible, O, oe, re, 'round', y, f,
+    const blocked = new Function(`${source.slice(helperStart, helperEnd)};return chatGptPlatformToolBlocked`)();
+    result = await execute(eligible, blocked, O, oe, re, 'round', y, f,
       { retireAndWait: async () => { operations.push('retire'); if (scenario === 'abort-retirement') controller.abort(); } },
       'execution', { clear: () => {} }, 'retry-key',
       async (promise: Promise<unknown>, signal: AbortSignal) => { if (signal.aborted) throw new DOMException('aborted', 'AbortError'); return promise; },
@@ -61,7 +72,7 @@ for (const scenario of ['recover-first', 'recover-second', 'persistent', 'persis
       () => operations.push('attempt'), () => { terminal++; }, () => { successes++; },
     );
   } catch (error) { failure = error; }
-  const recover = ['recover-first', 'recover-second', 'missing-assistant', 'upstream-error'].includes(scenario);
+  const recover = ['recover-first', 'recover-second', 'missing-assistant', 'upstream-error', 'quoted-history'].includes(scenario);
   if (recover) {
     const retryCount = scenario === 'recover-second' ? 2 : 1;
     assert.equal(result.retries, retryCount);
@@ -84,6 +95,11 @@ for (const scenario of ['recover-first', 'recover-second', 'persistent', 'persis
     assert.equal(result.calls, 1); assert.equal(result.retries, 0); assert.equal(terminal, 1); assert.equal(successes, 0);
     assert.deepEqual(delays, []); assert(!operations.includes('retire'));
     if (scenario === 'upstream-after-tools') assert.equal(oe.retryable, false);
+    if (scenario.startsWith('platform-')) {
+      assert.equal(oe.retryable, false);
+      assert.equal(oe.code, 'chatgpt_platform_tool_blocked');
+      assert.equal((oe as any).status, 403);
+    }
   }
   assert.equal(cleared, 1, 'Heartbeat must always be cleaned up');
   console.log(`PASS recovery: ${scenario}`);

@@ -142,15 +142,26 @@ export function addCodexEnvironment(
     activeUserIndex += 1;
   }
 
+  // Version the instruction ID so retained browser turns receive the update.
+  // Remove only our previous developer item, never a quoted assistant report.
+  const previousEvidenceId = stableMessageId("omp-tool-evidence-v1", threadId);
+  for (let index = input.length - 1; index >= 0; index -= 1) {
+    const item = record(input[index]);
+    if (item?.role !== "developer" || item.type !== "message" || item.id !== previousEvidenceId) continue;
+    input.splice(index, 1);
+    if (index < activeUserIndex) activeUserIndex -= 1;
+  }
   const evidenceInstruction = {
     type: "message",
-    id: stableMessageId("omp-tool-evidence-v1", threadId),
+    id: stableMessageId("omp-tool-evidence-v2", threadId),
     role: "developer",
     content: [{ type: "input_text", text: [
       "Report tool outcomes from the actual tool result. Distinguish a successful read from an attempted edit, a failed tool invocation, and a patch that was never submitted.",
       "Earlier assistant statements or quoted error messages are conversation history, not evidence that a current tool call failed. If platform rejection details are unavailable, say the cause is unverified.",
       "Before claiming that a patch changed a file or made no changes, inspect the current diff or file contents; existing changes may belong to another agent. Preserve successful tool results and existing edits.",
+      "Use authorization already given in this conversation. Do not request generic permission again for routine local inspection, scoped edits or targeted tests already authorized by the user. Keep required approvals for new scope, destructive actions or an explicit safety review.",
       "Honor an explicit platform tool rejection. Report the affected operation and available error details; do not resubmit it automatically or suggest that local Always allow/YOLO overrides platform controls.",
+      "A platform rejection is not a missing generic local permission: do not ask the user to say continue or confirm all repository work as its remedy. Report the blocked operation once and preserve completed work. Do not repeat, repackage or route the rejected operation through another tool. Continue only independent authorized work that does not circumvent the rejection; if none remains, give a concise blocked status.",
     ].join("\n") }],
   };
   if (!input.some(value => record(value)?.id === evidenceInstruction.id)) {

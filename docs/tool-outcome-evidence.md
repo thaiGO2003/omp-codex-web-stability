@@ -20,6 +20,17 @@ label an unverified cause as such. The guidance survives tool continuations
 without duplicating itself or changing tool outputs. It is a reporting aid;
 it cannot repair a platform rejection or guarantee model compliance.
 
+Version 2 also distinguishes existing local authorization from platform
+decisions. It asks the model to avoid re-requesting permission for routine
+work already authorized, while retaining approvals for new scope, destructive
+actions and explicit safety reviews. A platform rejection must be reported as
+such, not answered with a generic "confirm all repository work" question.
+Only independent authorized work may continue; the blocked operation must not
+be retried, repackaged or routed through another tool. Existing version 1
+shim-owned developer guidance is replaced using a new stable message ID so
+retained turns receive the updated instruction. Other developer messages,
+assistant reports and tool results are preserved.
+
 The fetch recovery patch handles only eligible transport failures. An explicit
 platform rejection in an error object receives a distinct terminal code,
 `chatgpt_platform_tool_blocked`, and is not automatically resubmitted. Assistant
@@ -49,3 +60,11 @@ suite passed 15 tests (23 PowerShell-dependent tests were skipped because that
 runtime was unavailable); the real 6.1.7 bundle harnesses passed 48 detection
 and 29 recovery scenarios. Windows payloads were regenerated from the updated
 shim, but native Windows execution was not tested.
+
+Version 2 passed 17 Bun tests and the generated installer payload consistency
+check. A separate real OMP session completed two consecutive turns: first
+`read` plus `git status/diff`, then a continuation that performed the previously
+authorized `edit` and checked the resulting diff with `bash`. All four tool
+results succeeded, the file changed from 1 to 2, and neither turn requested
+permission again. No platform rejection was forced or automatically resumed
+in this test. The shim was updated and restarted only while the bridge was idle.

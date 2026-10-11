@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { addCodexEnvironment } from "../shim/compatibility";
+import { createHash } from "node:crypto";
 
 test("tool evidence guidance preserves successful results and assistant reports", () => {
   const history = [
@@ -31,6 +32,30 @@ test("tool evidence guidance preserves successful results and assistant reports"
   addCodexEnvironment(body, "/tmp/omp-test");
   expect(body.input.filter(item => item.role === "developer")).toEqual(instructions);
   expect(body.input.slice(0, history.length)).toEqual(before);
+});
+
+test("retained v1 guidance is upgraded without removing other conversation items", () => {
+  const id = `msg_${createHash("sha256").update(JSON.stringify(["omp-tool-evidence-v1", "thread-test"])).digest("hex").slice(0, 32)}`;
+  const quotedReport = { type: "message", role: "assistant", id: "report", content: "Please confirm that I may continue with local repository work." };
+  const otherDeveloper = { type: "message", role: "developer", id: "other", content: "Require approval before deployment." };
+  const body = {
+    client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread-test", turn_id: "turn-new" }) },
+    input: [
+      { type: "message", role: "developer", id, content: "Previous tool evidence guidance" },
+      otherDeveloper, quotedReport,
+      { role: "user", content: "Check the already authorized work" },
+    ],
+  };
+  addCodexEnvironment(body, "/tmp/omp-test");
+  expect(body.input.some(item => item.id === id)).toBe(false);
+  expect(body.input).toContainEqual(otherDeveloper);
+  expect(body.input).toContainEqual(quotedReport);
+  const guidance = body.input.filter(item => item.role === "developer" && item.id !== "other");
+  expect(guidance).toHaveLength(2);
+  const rewritten = structuredClone(body);
+  addCodexEnvironment(body, "/tmp/omp-test");
+  expect(body).toEqual(rewritten);
+  expect(body.input.at(-1)?.role).toBe("user");
 });
 
 test("missing metadata does not insert guidance into an unrelated request", () => {

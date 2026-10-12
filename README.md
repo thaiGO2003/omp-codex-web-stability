@@ -61,6 +61,11 @@ For reported platform tool blocks, see [tool outcome evidence](docs/tool-outcome
 The shim distinguishes tool results from assistant claims in its guidance;
 explicit platform rejections are terminal and excluded from network recovery.
 
+For AionUI `Incoming transport closed` / `UNKNOWN_UPSTREAM_ERROR`, first check
+whether the OMP ACP process exited. See the [earlyoom interruption diagnosis](docs/acp-memory-interruption.md)
+for a confirmed Linux memory termination incident and the host configuration
+changes used to prevent repeated replacement-agent termination.
+
 ## Install / apply
 
 ### Windows: double-click installer

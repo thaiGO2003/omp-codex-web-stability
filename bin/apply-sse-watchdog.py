@@ -24,6 +24,13 @@ def replace_once(text, old, new):
 
 def patched_server(text):
     # Refuse partial installs/custom integration rather than guessing boundaries.
+    upgrades = MANIFEST.get('upgrades', [])
+    if upgrades and upgrades[0]['old'] in text:
+        for marker in MANIFEST['installedMarkers'][2:]:
+            if marker not in text:
+                raise ValueError("Existing watchdog integration differs from the tested layout; no files changed")
+        for upgrade in upgrades:
+            text = replace_once(text, upgrade['old'], upgrade['new'])
     if WATCHDOG_IMPORT in text:
         for marker in MANIFEST['installedMarkers']:
             if marker not in text:

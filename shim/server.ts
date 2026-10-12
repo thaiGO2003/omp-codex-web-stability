@@ -1,6 +1,6 @@
 import { isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
-import { guardResponseStream } from "./sse-watchdog";
+import { guardResponseStream, hasCompleteRecoveryInput } from "./sse-watchdog";
 import { record, addCodexEnvironment } from "./compatibility";
 import { taskLabelResponse } from "./task-label";
 import { translateToolCallIds, translateResponseStream } from "./tool-call-ids";
@@ -181,6 +181,31 @@ Bun.serve({
     const guardedBody = isOmpStream && threadId && turnId ? guardResponseStream(upstream.body!, {
       onStall: () => interruptNativeTurn(threadId, turnId),
       onCancel: () => interruptNativeTurn(threadId, turnId),
+      onRecover: typeof body === "string" && hasCompleteRecoveryInput(JSON.parse(body))
+        ? async signal => {
+          // This native version waits for the old owner's physical retirement.
+          const health = await fetch(new URL("/healthz", upstreamOrigin), {
+            signal: AbortSignal.any([req.signal, signal, AbortSignal.timeout(5000)]),
+          });
+          if (!health.ok || (await health.json()).version !== "6.1.7") {
+            throw new Error("Silent recovery requires the verified Codex Web 6.1.7 lifecycle");
+          }
+          const connect = new AbortController();
+          const deadline = setTimeout(() => connect.abort(), 20_000);
+          let replacement: Response;
+          try {
+            replacement = await fetch(upstreamUrl, {
+              method: req.method, headers, body, redirect: "manual",
+              signal: AbortSignal.any([req.signal, signal, connect.signal]),
+            });
+          } finally { clearTimeout(deadline); }
+          // The connection deadline ends at headers; generation keeps its semantic budget.
+          if (!replacement.ok || !replacement.body || !replacement.headers.get("content-type")?.includes("text/event-stream")) {
+            await replacement.body?.cancel();
+            throw new Error(`Silent recovery upstream HTTP ${replacement.status}; expected SSE`);
+          }
+          return replacement.body;
+        } : undefined,
     }) : upstream.body;
     const responseBody = isOmpStream ? translateResponseStream(guardedBody!) : guardedBody;
     const serializedBody = releaseThread && responseBody

@@ -20,14 +20,28 @@ the stuck turn and its recovery; it does not repair ChatGPT's remote service.
 - Comments and `response.heartbeat` do not reset it.
 - Before OMP's default 300-second timeout, the shim requests cancellation of the
   exact native `threadId`/`turnId` through the local `/admin/interrupt-turn` API.
-- It then emits `response.failed` with `chatgpt_web_semantic_timeout`, followed
-  by `[DONE]`. The original response ID and next sequence number are preserved.
+- On the verified 6.1.7 native lifecycle, it can replace a silent execution once
+  inside the same OMP request, after scoped cancellation succeeds. The native
+  registry waits for the old owner's physical retirement. The replacement
+  receives the same full request, including completed historical tool results.
+  Missing, duplicate or orphaned results, incremental `previous_response_id`
+  requests, unsupported tool items, and any text, reasoning or tool output
+  already forwarded in the current round prevent replay. Explicit failure or
+  platform rejection events are terminal and never trigger this recovery.
+  Replacement connection setup has a 20-second header deadline; the response
+  body retains its normal 240-second semantic budget.
+- A second stall, ineligible request or unsuccessful replacement emits
+  `response.failed` with `chatgpt_web_recovery_stopped`, followed
+  by `[DONE]`. The stopped code also prevents OMP's generic timeout retry loop.
+  The original response ID and next sequence number are preserved.
 - Downstream cancellation also retires an unfinished native turn.
 - A completed tool round is never interrupted merely because its client closes.
 
-A timeout is a failure, not a fabricated successful answer. After it, send a
-**new** `continue` message to start a new turn. Sessions and repository files
-remain available.
+A terminal timeout is a failure, not a fabricated successful answer. Eligible
+silent rounds recover automatically once. If the terminal error still appears,
+send a **new** `continue` message to start a new turn. Sessions and repository
+files remain available. This preserves the bounded watchdog rather than
+extending heartbeats indefinitely while a browser is stuck.
 
 ## Apply to an existing compatibility shim
 
@@ -142,11 +156,18 @@ The same generator embeds the Web setup from `setup-omp-codex-web.template.ps1`,
 bun run test
 ```
 
-The stream tests cover heartbeat-only stalls, progress that resets the timer,
-successful response preservation, downstream cancellation and completed tool
-rounds. An integration test uses OMP's actual parser when its sources are present;
+The stream tests cover heartbeat-only stalls, successful silent replacement,
+the one-attempt limit, complete tool history, failed scoped cleanup, cancellation
+during replacement, refusal exclusion, progress that resets the timer,
+successful response preservation, and completed tool rounds. Integration tests
+use OMP's actual parser, including two response identities in one client
+request, when its sources are present;
 it is skipped on machines without them. Set `OMP_GLOBAL_NODE_MODULES` if global
 OMP packages are installed outside `~/.bun/install/global/node_modules`.
+An isolated HTTP fixture also runs the actual shim server against a mock native
+endpoint. It checks scoped interruption, byte-identical replacement input,
+failed historical tool results, unsupported versions and generation beyond the
+connection deadline. These fixtures do not reproduce ChatGPT's remote stall.
 Installer tests cover backups, repeated application, dry runs, unsupported
 layouts, missing shims and rollback after a write failure.
 

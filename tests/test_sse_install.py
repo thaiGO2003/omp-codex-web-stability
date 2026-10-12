@@ -52,6 +52,30 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.server.read_text(), ORIGINAL)
         self.assertEqual(list(self.target.iterdir()), [self.server])
 
+    def test_upgrades_old_guard_without_rewriting_unrelated_server_logic(self):
+        upgraded = installer.patched_server(ORIGINAL)
+        previous = upgraded
+        for replacement in reversed(installer.MANIFEST['upgrades']):
+            previous = previous.replace(replacement['new'], replacement['old'])
+        self.server.write_text(previous)
+        installer.install(self.target)
+        self.assertEqual(self.server.read_text(), upgraded)
+        self.assertIn('onRecover:', self.server.read_text())
+        installer.install(self.target)
+        self.assertEqual(self.server.read_text(), upgraded)
+
+    def test_partial_upgrade_refuses_before_writing(self):
+        upgraded = installer.patched_server(ORIGINAL)
+        previous = upgraded
+        for replacement in reversed(installer.MANIFEST['upgrades']):
+            previous = previous.replace(replacement['new'], replacement['old'])
+        previous = previous.replace('onCancel: () => interruptNativeTurn(threadId, turnId)', 'onCancel: customCleanup')
+        self.server.write_text(previous)
+        with self.assertRaises(ValueError):
+            installer.install(self.target)
+        self.assertEqual(self.server.read_text(), previous)
+        self.assertFalse(list(self.target.glob('*.bak')))
+
     def test_unknown_or_partial_layout_refuses_without_modifying_files(self):
         for source in [ORIGINAL.replace(installer.OLD_BODY, 'custom handling'),
                        ORIGINAL + '\n' + installer.WATCHDOG_IMPORT,

@@ -29,7 +29,9 @@ The failure that motivated this repo was a soft compaction that expanded a sessi
 4. Provides a separate SSE watchdog installer for an existing OMP compatibility
    shim. It interrupts a Web turn after 240 seconds without meaningful response
    progress, before OMP's default 300-second timeout. Heartbeats alone cannot
-   keep the turn alive indefinitely. See [Message delivery timeout recovery](docs/message-delivery-timeout.md).
+   keep the turn alive indefinitely. On the verified 6.1.7 lifecycle, a silent
+   round with complete context can recover automatically once; current-round
+   output prevents replay. See [Message delivery timeout recovery](docs/message-delivery-timeout.md).
 
 5. Provides a browser turn rebinding fix for Codex Web 6.1.4 when ChatGPT saves
    an Activity response and the helper reports `another user turn while the bound

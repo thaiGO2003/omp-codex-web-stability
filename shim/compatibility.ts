@@ -125,9 +125,18 @@ export function addCodexEnvironment(
     "</environment_context>",
   ].join("\n");
 
+  // Version routing guidance too: retained browser history can otherwise keep
+  // the old lead/member wording beside the current instruction.
+  const previousBridgeId = stableMessageId("omp-tool-routing", threadId);
+  for (let index = input.length - 1; index >= 0; index -= 1) {
+    const item = record(input[index]);
+    if (item?.role !== "developer" || item.type !== "message" || item.id !== previousBridgeId) continue;
+    input.splice(index, 1);
+    if (index < activeUserIndex) activeUserIndex -= 1;
+  }
   const bridgeInstruction = {
     type: "message",
-    id: stableMessageId("omp-tool-routing", threadId),
+    id: stableMessageId("omp-tool-routing-v2", threadId),
     role: "developer",
     content: [{ type: "input_text", text: [
       "The outer runtime is Oh My Pi (OMP). Its tools use their own names and schemas, including bash, read, write, edit and task.",
@@ -135,6 +144,7 @@ export function addCodexEnvironment(
       "Run shell commands through the advertised bash tool. Use codex_exec only when inventory actually advertises exec_command or shell_command; it cannot invoke OMP bash.",
       "Launch OMP subagents through the advertised task tool, using the selected custom provider model. Follow task's schema for batching and isolation.",
       "When task returns background job handles, yield a brief pending status for OMP's automatic result delivery. Avoid blocking wait calls while child Web turns are starting; they share the connector channel.",
+      "Keep delegated ownership distinct: the assigned member executes the delegated browser or implementation work; the lead tracks task-board/mailbox results and dependencies. Do not have the lead reopen, rerun, or duplicate a member's assigned browser or implementation work. Start dependent waves only after the member reports the prerequisite acceptance evidence.",
     ].join("\n") }],
   };
   if (!input.some(value => record(value)?.id === bridgeInstruction.id)) {
@@ -144,16 +154,19 @@ export function addCodexEnvironment(
 
   // Version the instruction ID so retained browser turns receive the update.
   // Remove only our previous developer item, never a quoted assistant report.
-  const previousEvidenceId = stableMessageId("omp-tool-evidence-v1", threadId);
+  const previousEvidenceIds = new Set([
+    stableMessageId("omp-tool-evidence-v1", threadId),
+    stableMessageId("omp-tool-evidence-v2", threadId),
+  ]);
   for (let index = input.length - 1; index >= 0; index -= 1) {
     const item = record(input[index]);
-    if (item?.role !== "developer" || item.type !== "message" || item.id !== previousEvidenceId) continue;
+    if (item?.role !== "developer" || item.type !== "message" || !previousEvidenceIds.has(String(item.id))) continue;
     input.splice(index, 1);
     if (index < activeUserIndex) activeUserIndex -= 1;
   }
   const evidenceInstruction = {
     type: "message",
-    id: stableMessageId("omp-tool-evidence-v2", threadId),
+    id: stableMessageId("omp-tool-evidence-v3", threadId),
     role: "developer",
     content: [{ type: "input_text", text: [
       "Report tool outcomes from the actual tool result. Distinguish a successful read from an attempted edit, a failed tool invocation, and a patch that was never submitted.",
@@ -162,6 +175,7 @@ export function addCodexEnvironment(
       "Use authorization already given in this conversation. Do not request generic permission again for routine local inspection, scoped edits or targeted tests already authorized by the user. Keep required approvals for new scope, destructive actions or an explicit safety review.",
       "Honor an explicit platform tool rejection. Report the affected operation and available error details; do not resubmit it automatically or suggest that local Always allow/YOLO overrides platform controls.",
       "A platform rejection is not a missing generic local permission: do not ask the user to say continue or confirm all repository work as its remedy. Report the blocked operation once and preserve completed work. Do not repeat, repackage or route the rejected operation through another tool. Continue only independent authorized work that does not circumvent the rejection; if none remains, give a concise blocked status.",
+      "If a Team coordination action is platform-blocked, do not treat the block as proof that a delegated task or its acceptance is complete. Record that coordination blocker once. Continue only other independent, already-authorized coordination that neither duplicates the assigned member's work nor circumvents the rejection.",
     ].join("\n") }],
   };
   if (!input.some(value => record(value)?.id === evidenceInstruction.id)) {

@@ -31,6 +31,16 @@ shim-owned developer guidance is replaced using a new stable message ID so
 retained turns receive the updated instruction. Other developer messages,
 assistant reports and tool results are preserved.
 
+Version 3 makes delegation ownership explicit. When a member owns a browser or
+implementation task, the lead tracks the task board, mailbox result and
+dependencies; it does not reopen or duplicate that member's work. A later wave
+needs the member's reported acceptance evidence. If a Team coordination call is
+explicitly platform-blocked, record that call once and do not infer that the
+delegated task or acceptance completed. The lead may still perform separate,
+already-authorized coordination that neither duplicates the member nor routes
+around the rejection. Retained turns replace both earlier evidence versions and
+the earlier routing guidance with the Version 3 instructions.
+
 The fetch recovery patch handles only eligible transport failures. An explicit
 platform rejection in an error object receives a distinct terminal code,
 `chatgpt_platform_tool_blocked`, and is not automatically resubmitted. Assistant

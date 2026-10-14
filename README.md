@@ -33,7 +33,7 @@ The failure that motivated this repo was a soft compaction that expanded a sessi
    round with complete context can recover automatically once; current-round
    output prevents replay. See [Message delivery timeout recovery](docs/message-delivery-timeout.md).
 
-5. Provides browser turn rebinding fixes for Codex Web 6.1.4 and 6.1.7 linux-x64
+5. Provides browser turn rebinding fixes for Codex Web 6.1.4 and 6.1.7 Windows/Linux x64
    when ChatGPT saves
    an Activity response and the helper reports `another user turn while the bound
    assistant response was detached`. It preserves ownership across the selected
@@ -77,12 +77,20 @@ changes used to prevent repeated replacement-agent termination.
 2. Download the [repository ZIP](https://github.com/thaiGO2003/omp-codex-web-stability/archive/refs/heads/main.zip) and **extract it**.
 3. Double-click **[install.bat](install.bat)** in the extracted folder. Administrator access and Python are not required. The window stays open so you can read the result.
 
+You can also download `install.bat` alone. When `install.ps1` is missing or has an
+older bundle revision, BAT downloads the matching installer from this repository,
+checks its revision and PowerShell syntax, then saves a backup before replacing
+the old file. A failed download leaves the old file intact and stops installation.
+It prefers PowerShell 7 and falls back to Windows PowerShell.
+
 The bundled **[install.ps1](install.ps1)** also works when downloaded alone. It
 installs the full compatibility shim with the SSE watchdog, configures OMP model
 roles and providers, sets compaction to `shake -> handoff`, and restores the
 120-second Send budget plus the 30-second selector probe where supported.
-The saved-turn, approval-card and model-picker patch is applied only to known
-6.1.4 installs; it is skipped on 6.1.6 and newer. Unknown layouts are reported.
+The saved-turn rebinding fix also supports verified 6.1.7 Windows x64 bundles,
+updating both CLI/helper and their integrity manifest together with the Send
+budgets. The older approval-card and model-picker patch remains specific to
+6.1.4. Unknown layouts are reported; mismatched 6.1.7 manifests stop installation.
 Changed files get timestamped backups. Other model roles and provider credentials
 are preserved; the default connection uses local ports 17842 -> 17841.
 
@@ -96,8 +104,9 @@ From PowerShell, preview or customize the installation:
 
 `-BunPath`, `-AgentDirectory`, `-ShimDirectory`, `-HelperPath` and
 `-SkipBrowserFixes` are also supported. A custom helper path receives the guarded
-timeout fix; rebinding additionally requires a `6.1.4-*/app/browser-helper.cjs`
-installation path. `-DryRun` leaves installation files unchanged and starts no
+timeout fix; 6.1.4 rebinding requires a `6.1.4-*/app/browser-helper.cjs`
+installation path, while 6.1.7 requires the runtime's `manifest.json` and both
+bundles. `-DryRun` leaves installation files unchanged and starts no
 shim. Existing shim processes are not interrupted; restart their window after
 active turns finish. Close/reopen Codex Web while idle and restart OMP to load
 the changes. Bun and a signed-in, running Codex Web are prerequisites; this

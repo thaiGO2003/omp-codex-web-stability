@@ -20,6 +20,7 @@ param(
     [switch]$DryRun
 )
 Set-StrictMode -Version Latest
+# OMP-STABILITY-BUNDLE: 2026-10-14-rebinding-617
 $ErrorActionPreference = 'Stop'
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $utf8
@@ -51,7 +52,7 @@ function Get-InstalledHelpers {
     $versionRoot = Join-Path $userDirectory '.codex-chatgpt-web/versions'
     if ([IO.Directory]::Exists($versionRoot)) {
         $paths += @(Get-ChildItem -LiteralPath $versionRoot -Filter browser-helper.cjs -Recurse -File |
-            Select-Object -ExpandProperty FullName)
+            Where-Object { $_.Directory.Name -eq 'app' } | Select-Object -ExpandProperty FullName)
     }
     $descriptorPath = Join-Path $userDirectory '.codex-chatgpt-web/runtime/launcher-browser.json'
     if ([IO.File]::Exists($descriptorPath)) {
@@ -61,6 +62,10 @@ function Get-InstalledHelpers {
                 $descriptor.helper.PSObject.Properties['script'] -and
                 [IO.File]::Exists([string]$descriptor.helper.script)) {
                 $paths += [string]$descriptor.helper.script
+                if ($descriptor.helper.PSObject.Properties['executable']) {
+                    $packaged = Join-Path (Split-Path -Parent ([string]$descriptor.helper.executable)) 'resources/runtime/app/browser-helper.cjs'
+                    if ([IO.File]::Exists($packaged)) { $paths += $packaged }
+                }
             }
         } catch { Write-Warning 'Could not read the launcher helper path; using discovered version folders.' }
     }
@@ -106,10 +111,23 @@ try {
 
     $helpers = @()
     $rebindingHelpers = @()
+    $rebinding617Runtimes = @()
     if (-not $SkipBrowserFixes) {
         if (-not $HelperPath) { $HelperPath = @(Get-InstalledHelpers) }
         foreach ($path in @($HelperPath | Sort-Object -Unique)) {
             if (-not [IO.File]::Exists($path)) { throw "Browser helper not found: $path" }
+            $runtimeRoot = Split-Path -Parent (Split-Path -Parent $path)
+            $runtimeManifestPath = Join-Path $runtimeRoot 'manifest.json'
+            if ([IO.File]::Exists($runtimeManifestPath)) {
+                $runtimeManifest = [IO.File]::ReadAllText($runtimeManifestPath, $utf8) | ConvertFrom-Json
+                if ($runtimeManifest.appVersion -eq '6.1.7') {
+                    Invoke-BundledScript 'apply-browser-rebinding-617.ps1' @{ RuntimePath = $runtimeRoot; BunPath = $BunPath; DryRun = $true }
+                    $rebinding617Runtimes += $runtimeRoot
+                    continue
+                }
+            } elseif ($path -match '[/\\]6\.1\.7-[^/\\]+[/\\]app[/\\]browser-helper\.cjs$') {
+                throw "6.1.7 runtime manifest is missing: $runtimeManifestPath"
+            }
             $text = [IO.File]::ReadAllText($path, $utf8)
             if (-not ($text.Contains('send:20000,') -or $text.Contains('send:60000,') -or $text.Contains('send:120000,'))) {
                 Write-Warning "Unsupported Send timeout layout; browser helper unchanged: $path"
@@ -117,16 +135,19 @@ try {
             }
             Invoke-BundledScript 'apply-send-timeout.ps1' @{ HelperPath = $path; IncludeSelectorTimeout = $true; DryRun = $true }
             $helpers += $path
-            # The saved-turn rebinding patch is specific to 6.1.4. Never force it into 6.1.6 or newer.
+            # The legacy patch is specific to 6.1.4; 6.1.7 is handled above with its manifest.
             if ($path -match '[/\\]6\.1\.4-[^/\\]+[/\\]app[/\\]browser-helper\.cjs$') {
                 Invoke-BundledScript 'apply-browser-rebinding.ps1' @{ HelperPath = $path; DryRun = $true }
                 $rebindingHelpers += $path
             } else { Write-Host "Saved-turn rebinding patch is only for 6.1.4; skipped: $path" }
         }
-        if ($helpers.Count -eq 0) { Write-Warning 'No supported browser helper found. Connection and shim setup can still proceed. To patch another install, use -HelperPath C:\path\browser-helper.cjs.' }
+        if ($helpers.Count -eq 0 -and $rebinding617Runtimes.Count -eq 0) { Write-Warning 'No supported browser helper found. Connection and shim setup can still proceed. To patch another install, use -HelperPath C:\path\browser-helper.cjs.' }
     }
     if ($DryRun) { Write-Host 'Preview finished. No installation files changed; no shim was started.'; exit 0 }
 
+    foreach ($runtimeRoot in @($rebinding617Runtimes | Sort-Object -Unique)) {
+        Invoke-BundledScript 'apply-browser-rebinding-617.ps1' @{ RuntimePath = $runtimeRoot; BunPath = $BunPath }
+    }
     foreach ($path in $rebindingHelpers) {
         Invoke-BundledScript 'apply-browser-rebinding.ps1' @{ HelperPath = $path }
     }

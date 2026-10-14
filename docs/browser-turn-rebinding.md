@@ -35,7 +35,34 @@ before reloading its browser helper. The installer validates both bundle hashes
 and exact patch layouts before writes, updates the manifest, saves backups outside
 the runtime and rolls back files if a write fails. Reapplication is idempotent.
 Unknown versions/platforms, corrupt manifests and partial layouts are refused.
-The old 6.1.4 installer does not install this port. Windows is not validated here.
+The old 6.1.4 installer does not install this Python port.
+
+The updated Windows `install.bat`/`install.ps1` now include a separate PowerShell
+port for 6.1.7. Its compiled patch layouts were verified against the checksum-checked
+upstream `codex-chatgpt-web-windows-amd64.zip` release. It uses Bun, validates both
+bundle hashes before writes, updates both ordinary Send budgets to 120 seconds,
+keeps the selector budget at 30 seconds, and updates the manifest in the same
+transaction. The installer skips the old manifest-unaware timeout writer for
+these runtimes. It also discovers a writable launcher package runtime beside
+the descriptor's executable when present; backup directories are excluded.
+
+To apply just this Windows port:
+
+```powershell
+.\bin\apply-browser-rebinding-617.ps1 -RuntimePath C:\path\resources\runtime -DryRun
+.\bin\apply-browser-rebinding-617.ps1 -RuntimePath C:\path\resources\runtime
+```
+
+The earlier Python installer remains Linux-only. PowerShell integration can be
+tested on Linux using the real Windows bundle files; native Windows double-click
+execution still requires validation on a Windows host.
+
+The Windows port passed 36 compiled browser scenarios using the official Windows
+bundles. The combined suite passed 26 Bun and 48 Python/PowerShell tests with no
+skips under PowerShell 7 on Linux. It covers the actual BAT bootstrap command
+(including paths with spaces/apostrophes, offline/invalid downloads and backups),
+standalone installer preview, corrupt second-bundle rejection, rollback after a
+write failure, credential preservation, and byte-for-byte idempotence.
 
 Validation runs the actual compiled 6.1.7 reconciliation methods and pre-Send
 connector capture in Chromium against inert DOM fixtures:

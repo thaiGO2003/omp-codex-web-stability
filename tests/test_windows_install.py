@@ -1,4 +1,6 @@
 import json
+import os
+import hashlib
 from pathlib import Path
 import re
 import subprocess
@@ -103,6 +105,66 @@ class WindowsInstallTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Bun not found', result.stderr)
         self.assertEqual(helper.read_bytes(), original)
+        self.assertFalse(self.agent.exists())
+        self.assertFalse(self.shim.exists())
+
+    @unittest.skipUnless(os.environ.get('CODEX_WEB_617_WINDOWS_RUNTIME'), 'Supply verified Windows 6.1.7 bundles')
+    def test_617_standalone_preserves_manifest_and_reapplies_without_backups(self):
+        vendor = Path(os.environ['CODEX_WEB_617_WINDOWS_RUNTIME'])
+        helper = self.helper('6.1.7')
+        runtime = helper.parent.parent
+        for name in ['cli.js', 'browser-helper.cjs']:
+            (runtime / 'app' / name).write_bytes((vendor / 'app' / name).read_bytes())
+        manifest_path = runtime / 'manifest.json'
+        manifest_path.write_bytes((vendor / 'manifest.json').read_bytes())
+        before = {p: p.read_bytes() for p in [helper, runtime / 'app/cli.js', manifest_path]}
+        result = self.run_install(helper, '-DryRun', standalone=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        self.assertFalse(self.agent.exists())
+        self.assertFalse(self.shim.exists())
+        result = self.run_install(helper, standalone=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        manifest = json.loads(manifest_path.read_text())
+        for name in ['cli.js', 'browser-helper.cjs']:
+            data = (runtime / 'app' / name).read_bytes()
+            record = next(r for r in manifest['files'] if r['path'] == 'app/' + name)
+            self.assertEqual(record['size'], len(data))
+            self.assertEqual(record['sha256'], hashlib.sha256(data).hexdigest())
+            self.assertIn(b'submittedAppMentionHref', data)
+            self.assertIn(b'send:120000,', data)
+        saved = {p: p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        result = self.run_install(helper)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual({p: p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, saved)
+
+    @unittest.skipUnless(os.environ.get('CODEX_WEB_617_WINDOWS_RUNTIME'), 'Supply verified Windows 6.1.7 bundles')
+    def test_617_corrupt_second_bundle_prevents_config_and_runtime_writes(self):
+        vendor = Path(os.environ['CODEX_WEB_617_WINDOWS_RUNTIME'])
+        helper = self.helper('6.1.7')
+        runtime = helper.parent.parent
+        (runtime / 'app/cli.js').write_bytes((vendor / 'app/cli.js').read_bytes())
+        (runtime / 'manifest.json').write_bytes((vendor / 'manifest.json').read_bytes())
+        before = {p: p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        result = self.run_install(helper)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual({p: p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+        self.assertFalse(self.agent.exists())
+        self.assertFalse(self.shim.exists())
+
+    @unittest.skipUnless(os.environ.get('CODEX_WEB_617_WINDOWS_RUNTIME') and os.name != 'nt', 'Linux host plus verified Windows bundles required')
+    def test_617_write_failure_restores_first_bundle_and_manifest(self):
+        vendor = Path(os.environ['CODEX_WEB_617_WINDOWS_RUNTIME'])
+        helper = self.helper('6.1.7')
+        runtime = helper.parent.parent
+        for name in ['cli.js', 'browser-helper.cjs']:
+            (runtime / 'app' / name).write_bytes((vendor / 'app' / name).read_bytes())
+        (runtime / 'manifest.json').write_bytes((vendor / 'manifest.json').read_bytes())
+        before = {p: p.read_bytes() for p in [helper, runtime / 'app/cli.js', runtime / 'manifest.json']}
+        helper.chmod(0o444)
+        result = self.run_install(helper)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
         self.assertFalse(self.agent.exists())
         self.assertFalse(self.shim.exists())
 

@@ -1,5 +1,69 @@
 # ChatGPT saved-turn replacement interrupted OMP
 
+## Codex Web 6.1.7: detached response followed by expired-token reports
+
+On October 14, 2026 at 07:29:58 (Asia/Ho_Chi_Minh), the installed 6.1.7 helper
+recorded `ChatGPT opened another user turn while the bound assistant response was
+detached`. At accepted Send and response-visible, the snapshot had zero user
+bubbles; the failure snapshot had one saved user bubble while Stop was still
+visible. This is the optimistic-to-saved transition covered by the earlier 6.1.4
+fix, which was absent from both the current 6.1.7 runtime and launcher package.
+
+The OMP journal proves that roster and task-board calls completed before this
+failure. It contains no mailbox result from that turn. A later assistant report
+that both task-board and mailbox actions did not execute is therefore inaccurate.
+An invalid/retired token report after browser retirement is consistent with the
+turn lifecycle, but no raw rejected-token event was retained in the cited OMP
+journal. Do not infer a platform safety rejection or revoke/extend tokens from
+assistant prose. Task acceptance and wave completion still require member evidence.
+
+The 6.1.7 port captures the selected connector before Send and verifies its exact
+app identity and the complete saved prompt before rebinding. It preserves accepted
+user-ID checks, competing-turn checks and multipart history handling. It neither
+issues a second Send nor retries a blocked tool operation. Existing approval and
+fetch recovery behavior is unchanged.
+
+Apply to a writable **6.1.7 linux-x64** package/runtime:
+
+```bash
+python3 bin/patch-browser-rebinding-617.py /path/to/resources/runtime --dry-run
+python3 bin/patch-browser-rebinding-617.py /path/to/resources/runtime
+```
+
+Patch the launcher package as well as the installed runtime. Finish active turns
+before reloading its browser helper. The installer validates both bundle hashes
+and exact patch layouts before writes, updates the manifest, saves backups outside
+the runtime and rolls back files if a write fails. Reapplication is idempotent.
+Unknown versions/platforms, corrupt manifests and partial layouts are refused.
+The old 6.1.4 installer does not install this port. Windows is not validated here.
+
+Validation runs the actual compiled 6.1.7 reconciliation methods and pre-Send
+connector capture in Chromium against inert DOM fixtures:
+
+```bash
+CHATGPT_DOM_TEST_BROWSER=/path/to/chromium \
+  bun tests/verify-browser-rebinding-617.ts /path/to/resources/runtime
+```
+
+The original bundles reproduced the matching-connector failure in four checks;
+the patched bundles passed 36 scenarios including Markdown escaping, nested links,
+pending hydration, large prompts, altered tasks, foreign apps, duplicate roots and
+competing turns. The 44 compiled fetch-recovery scenarios still passed. The toolkit
+suite passed 26 Bun tests and 18 Python tests; 26 additional platform/vendor tests
+were skipped. These fixtures establish the corrected ownership behavior, not
+completion of the user's Wave 4/5/6 tasks.
+
+Both affected Linux runtime copies were patched and all 6,030 manifest entries
+matched in each. The native daemon was atomically drained while idle, its helper
+child retired, and new-turn admission resumed. The next OMP request started a
+fresh helper from the patched installed path. An isolated live OMP smoke used a
+65-second delayed bash job and a separate second bash call. OMP handled background
+completion, returned both displayed markers with a normal final stop, and had no
+assistant error or stderr. This did not read Team mailboxes, modify game files or
+resume/close the user's outstanding waves. The daemon's in-memory CLI fallback
+receives the updated CLI bundle on its next restart; the active launcher helper
+already uses the patch.
+
 On 2026-10-06 the Linux browser diagnostics recorded this error at 01:09, 01:20,
 01:25 and 01:28 (Asia/Ho_Chi_Minh):
 

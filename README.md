@@ -33,7 +33,8 @@ The failure that motivated this repo was a soft compaction that expanded a sessi
    round with complete context can recover automatically once; current-round
    output prevents replay. See [Message delivery timeout recovery](docs/message-delivery-timeout.md).
 
-5. Provides a browser turn rebinding fix for Codex Web 6.1.4 when ChatGPT saves
+5. Provides browser turn rebinding fixes for Codex Web 6.1.4 and 6.1.7 linux-x64
+   when ChatGPT saves
    an Activity response and the helper reports `another user turn while the bound
    assistant response was detached`. It preserves ownership across the selected
    connector's rendered prefix, layout newline and delayed hydration. See

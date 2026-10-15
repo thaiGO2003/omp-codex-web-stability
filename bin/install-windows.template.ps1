@@ -20,7 +20,7 @@ param(
     [switch]$DryRun
 )
 Set-StrictMode -Version Latest
-# OMP-STABILITY-BUNDLE: 2026-10-14-rebinding-617
+# OMP-STABILITY-BUNDLE: 2026-10-16-lifecycle-619
 $ErrorActionPreference = 'Stop'
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $utf8

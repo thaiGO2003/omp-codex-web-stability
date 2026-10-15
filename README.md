@@ -42,6 +42,37 @@ The failure that motivated this repo was a soft compaction that expanded a sessi
 
 The script is intentionally conservative: unknown helper layouts are reported instead of rewritten.
 
+## Codex Web 6.1.9: stops after accepted or saved turns
+
+The 6.1.9 update replaces the previously patched browser bundles. Its saved-turn
+ownership comparison can reject a rendered connector mention even when the
+entire submitted task is unchanged. The shim also used to refuse silent
+replacement on every runtime except 6.1.7.
+
+For the verified **6.1.9 Linux x64** runtime:
+
+```bash
+python3 bin/patch-browser-rebinding-619.py ~/.codex-chatgpt-web/versions/6.1.9-linux-x64 --dry-run
+python3 bin/patch-browser-rebinding-619.py ~/.codex-chatgpt-web/versions/6.1.9-linux-x64
+python3 bin/apply-sse-watchdog.py
+python3 bin/reload-runtime-619.py
+systemctl --user restart codex-chatgpt-web-omp-shim.service
+```
+
+Apply while idle. Reload the daemon with the command above rather than reopening
+the launcher: a full launcher restart restores its packaged runtime and removes
+local browser patches. Reapply after a launcher restart or update.
+The browser patch checks
+both bundle hashes, backs up both bundles and the manifest, and updates integrity
+records together. It preserves complete-payload and selected-connector checks;
+it does not accept arbitrary replacement user turns. Windows browser bundles are
+not covered by this new patch. The regenerated PowerShell shim installers include
+the 6.1.9 lifecycle guard and cancellation acknowledgement validation.
+
+See [the 6.1.9 investigation and limits](docs/recovery-619.md). A submitted-turn
+failure does not by itself prove that tools never ran; the shim does not blindly
+replay that terminal error.
+
 ## Fix Failed to fetch without losing the OMP session
 
 The new [6.1.7 fetch recovery patch](docs/fetch-recovery.md) recognizes failed

@@ -52,6 +52,19 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.server.read_text(), ORIGINAL)
         self.assertEqual(list(self.target.iterdir()), [self.server])
 
+    def test_upgrades_installed_617_lifecycle_guard_and_validates_ack(self):
+        current = installer.patched_server(ORIGINAL)
+        previous = current
+        for upgrade in installer.MANIFEST['runtimeUpgrades']:
+            previous = previous.replace(upgrade['new'], upgrade['old'])
+        self.server.write_text(previous)
+        installer.install(self.target)
+        self.assertEqual(self.server.read_text(), current)
+        self.assertIn('["6.1.7", "6.1.9"]', current)
+        self.assertIn('invalid acknowledgement', current)
+        installer.install(self.target)
+        self.assertEqual(len(list(self.target.glob('*.bak'))), 1)
+
     def test_upgrades_old_guard_without_rewriting_unrelated_server_logic(self):
         upgraded = installer.patched_server(ORIGINAL)
         previous = upgraded

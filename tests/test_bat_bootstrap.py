@@ -26,7 +26,7 @@ class BatBootstrapTests(unittest.TestCase):
             self.assertEqual(len(backups), 1)
             self.assertEqual(backups[0].read_text(), 'old installer')
             before = target.read_bytes()
-            for replacement in ['throw "fixture offline"', '[IO.File]::WriteAllText($OutFile,"<html>not a script</html>")', '[IO.File]::WriteAllText($OutFile,"# OMP-STABILITY-BUNDLE: 2026-10-14-rebinding-617`nfunction {")']:
+            for replacement in ['throw "fixture offline"', '[IO.File]::WriteAllText($OutFile,"<html>not a script</html>")', '[IO.File]::WriteAllText($OutFile,"# OMP-STABILITY-BUNDLE: 2026-10-16-lifecycle-619`nfunction {")']:
                 bad = 'function Invoke-WebRequest { param([switch]$UseBasicParsing,$Uri,$OutFile); ' + replacement + ' }; '
                 result = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-Command', bad + command], env=env, capture_output=True, text=True)
                 self.assertNotEqual(result.returncode, 0)

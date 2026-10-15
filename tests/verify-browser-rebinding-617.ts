@@ -4,6 +4,7 @@ import { strict as assert } from "node:assert";
 const runtime = process.argv[2];
 if (!runtime || !process.env.CHATGPT_DOM_TEST_BROWSER) throw Error("Pass runtime and set CHATGPT_DOM_TEST_BROWSER");
 const unpatched = process.argv.includes("--expect-unpatched");
+const version619 = process.argv.includes("--version-619");
 const { chromium } = require(`${runtime}/app/node_modules/playwright-core`);
 const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
 let checks = 0;
@@ -15,7 +16,9 @@ try {
     const end = source.indexOf("async attachedPromptText(", begin);
     assert(begin >= 0 && end > begin);
     const selector = (identity: string) => `[data-fixture-identity="${identity}"]`;
-    const dependencies = name === "cli.js" ? ["_t", "Be", "ox", "Xn"] : ["Ce", "U", "Ua", "Je"];
+    const dependencies = version619
+      ? (name === "cli.js" ? ["wt", "Re", "Ax", "Er"] : ["we", "V", "ds", "mt"])
+      : (name === "cli.js" ? ["_t", "Be", "ox", "Xn"] : ["Ce", "U", "Ua", "Je"]);
     const reconcile = new Function(...dependencies, `return (class {${source.slice(begin, end)}}).prototype.reconcileAssistantTurnBinding`)(
       (p: unknown) => p, (p: unknown) => p,
       (_initial: string[], _old: string, current: string[]) => current[0], selector,

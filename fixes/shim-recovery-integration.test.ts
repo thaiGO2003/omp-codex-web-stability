@@ -8,7 +8,7 @@ const encoder = new TextEncoder();
 const frame = (event: object) => encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
 
 test("actual shim HTTP path preserves full input on bounded silent replacement", async () => {
-  for (const scenario of ["complete", "missing_result", "unsupported_version"]) {
+  for (const scenario of ["complete", "complete_619", "missing_result", "unsupported_version", "invalid_ack"]) {
     const dir = await mkdtemp(join(tmpdir(), "omp-silent-http-"));
     const bodies: string[] = [];
     let interrupted = 0;
@@ -16,14 +16,14 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
     const native = Bun.serve({ hostname: "127.0.0.1", port: 0,
       async fetch(req) {
         const url = new URL(req.url);
-        if (url.pathname === "/healthz") return Response.json({ version: scenario === "unsupported_version" ? "6.1.8" : "6.1.7" });
+        if (url.pathname === "/healthz") return Response.json({ version: scenario === "unsupported_version" ? "6.1.8" : scenario === "complete_619" ? "6.1.9" : "6.1.7" });
         if (url.pathname === "/admin/interrupt-turn") {
           expect(req.headers.get("authorization")).toBe("Bearer fixture-control");
           const metadata = await req.json();
           expect(metadata).toEqual({ threadId: "thread_fixture", turnId: "turn_fixture" });
           interrupted++;
           try { first?.close(); } catch { /* idempotent fixture interruption */ }
-          return Response.json({ status: "ok", cancelled_http_turns: 1, cancelled_browser_turns: 1 });
+          return Response.json({ status: scenario === "invalid_ack" ? "refused" : "ok", cancelled_http_turns: 1, cancelled_browser_turns: 1 });
         }
         expect(url.pathname).toBe("/v1/responses");
         bodies.push(await req.text());
@@ -83,8 +83,9 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
       });
       const output = await response.text();
       expect(interrupted).toBe(scenario === "unsupported_version" ? 2 : 1);
-      expect(bodies.length).toBe(scenario === "complete" ? 2 : 1);
-      if (scenario === "complete") {
+      const eligible = scenario === "complete" || scenario === "complete_619";
+      expect(bodies.length).toBe(eligible ? 2 : 1);
+      if (eligible) {
         expect(bodies[1]).toBe(bodies[0]);
         expect(JSON.parse(bodies[1]).input).toContainEqual({ type: "function_call_output", call_id: "call_done", output: "failed: exit 7" });
         expect(output).toContain("HTTP_RECOVERED");

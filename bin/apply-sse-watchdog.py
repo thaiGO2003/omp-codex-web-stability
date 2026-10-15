@@ -24,6 +24,9 @@ def replace_once(text, old, new):
 
 def patched_server(text):
     # Refuse partial installs/custom integration rather than guessing boundaries.
+    for upgrade in MANIFEST.get('runtimeUpgrades', []):
+        if upgrade['old'] in text:
+            text = replace_once(text, upgrade['old'], upgrade['new'])
     upgrades = MANIFEST.get('upgrades', [])
     if upgrades and upgrades[0]['old'] in text:
         for marker in MANIFEST['installedMarkers'][2:]:

@@ -23,7 +23,14 @@ async function interruptNativeTurn(threadId: string | undefined, turnId: string 
     signal: AbortSignal.timeout(5000),
   });
   if (!result.ok) throw new Error(`Native turn interruption HTTP ${result.status}`);
-  console.log("OMP interrupted native Web turn", { thread: threadId.slice(0, 8), turn: turnId.slice(0, 8), ...await result.json() });
+  const acknowledgement = await result.json();
+  if (acknowledgement.status !== "ok"
+    || !Number.isInteger(acknowledgement.cancelled_http_turns) || acknowledgement.cancelled_http_turns < 0
+    || !Number.isInteger(acknowledgement.cancelled_browser_turns) || acknowledgement.cancelled_browser_turns < 0) {
+    throw new Error("Native turn interruption returned an invalid acknowledgement");
+  }
+  console.log("OMP interrupted native Web turn", { thread: threadId.slice(0, 8), turn: turnId.slice(0, 8),
+    cancelledHttpTurns: acknowledgement.cancelled_http_turns, cancelledBrowserTurns: acknowledgement.cancelled_browser_turns });
 }
 
 const threadTails = new Map<string, Promise<void>>();
@@ -187,8 +194,8 @@ Bun.serve({
           const health = await fetch(new URL("/healthz", upstreamOrigin), {
             signal: AbortSignal.any([req.signal, signal, AbortSignal.timeout(5000)]),
           });
-          if (!health.ok || (await health.json()).version !== "6.1.7") {
-            throw new Error("Silent recovery requires the verified Codex Web 6.1.7 lifecycle");
+          if (!health.ok || !["6.1.7", "6.1.9"].includes((await health.json()).version)) {
+            throw new Error("Silent recovery requires a verified Codex Web 6.1.7 or 6.1.9 lifecycle");
           }
           const connect = new AbortController();
           const deadline = setTimeout(() => connect.abort(), 20_000);

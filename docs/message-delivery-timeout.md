@@ -20,8 +20,8 @@ the stuck turn and its recovery; it does not repair ChatGPT's remote service.
 - Comments and `response.heartbeat` do not reset it.
 - Before OMP's default 300-second timeout, the shim requests cancellation of the
   exact native `threadId`/`turnId` through the local `/admin/interrupt-turn` API.
-- On the verified 6.1.7 native lifecycle, it can replace a silent execution once
-  inside the same OMP request, after scoped cancellation succeeds. The native
+- On the verified 6.1.7 and 6.1.9 native lifecycles, it can replace a silent execution once
+  inside the same OMP request, after scoped cancellation returns a valid acknowledgement. The native
   registry waits for the old owner's physical retirement. The replacement
   receives the same full request, including completed historical tool results.
   Missing, duplicate or orphaned results, incremental `previous_response_id`

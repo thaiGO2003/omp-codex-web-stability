@@ -100,6 +100,25 @@ For reported platform tool blocks, see [tool outcome evidence](docs/tool-outcome
 The shim distinguishes tool results from assistant claims in its guidance;
 explicit platform rejections are terminal and excluded from network recovery.
 
+## BrowserPanel missing from the direct tool inventory
+
+OMP can expose only a small set of direct tools while mounting MCP tools under
+`xd://`. No `onedevtool/browser_list_tabs` match in `codex_tool_inventory` is
+therefore insufficient evidence that the BrowserPanel connection is missing.
+
+The shim's routing guidance now requires reading the live `xd://` catalog,
+reading the returned device path for its schema, then sending JSON arguments
+through OMP's advertised `write` tool. This invokes the original MCP tool with
+its existing approval policy. For BrowserPanel, start with the discovered
+`browser_list_tabs` device and retain its returned project/tab IDs.
+
+Existing sessions receive the updated guidance on their next request after
+the shim reloads. Old routing messages are replaced without deleting tool
+results or other conversation instructions. A current catalog error or MCP
+failure still needs to be reported; this change does not replay rejected tools
+or mark browser acceptance complete. The standalone Windows installers contain
+the same routing update.
+
 For AionUI `Incoming transport closed` / `UNKNOWN_UPSTREAM_ERROR`, first check
 whether the OMP ACP process exited. See the [earlyoom interruption diagnosis](docs/acp-memory-interruption.md)
 for a confirmed Linux memory termination incident and the host configuration

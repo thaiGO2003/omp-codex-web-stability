@@ -44,6 +44,7 @@ test("tool evidence guidance preserves successful results and assistant reports"
 test("retained routing and evidence guidance is upgraded without removing other conversation items", () => {
   const legacyRoutingId = `msg_${createHash("sha256").update(JSON.stringify(["omp-tool-routing", "thread-test"])).digest("hex").slice(0, 32)}`;
   const legacyRoutingV2Id = `msg_${createHash("sha256").update(JSON.stringify(["omp-tool-routing-v2", "thread-test"])).digest("hex").slice(0, 32)}`;
+  const legacyRoutingV3Id = `msg_${createHash("sha256").update(JSON.stringify(["omp-tool-routing-v3", "thread-test"])).digest("hex").slice(0, 32)}`;
   const legacyEvidenceV1Id = `msg_${createHash("sha256").update(JSON.stringify(["omp-tool-evidence-v1", "thread-test"])).digest("hex").slice(0, 32)}`;
   const legacyEvidenceV2Id = `msg_${createHash("sha256").update(JSON.stringify(["omp-tool-evidence-v2", "thread-test"])).digest("hex").slice(0, 32)}`;
   const legacyEvidenceV3Id = `msg_${createHash("sha256").update(JSON.stringify(["omp-tool-evidence-v3", "thread-test"])).digest("hex").slice(0, 32)}`;
@@ -54,6 +55,7 @@ test("retained routing and evidence guidance is upgraded without removing other 
     input: [
       { type: "message", role: "developer", id: legacyRoutingId, content: "Previous tool routing guidance" },
       { type: "message", role: "developer", id: legacyRoutingV2Id, content: "Previous direct-inventory-only guidance" },
+      { type: "message", role: "developer", id: legacyRoutingV3Id, content: "Previous catalog-only guidance" },
       { type: "message", role: "developer", id: legacyEvidenceV1Id, content: "Previous tool evidence guidance" },
       { type: "message", role: "developer", id: legacyEvidenceV2Id, content: "Current old tool evidence guidance" },
       { type: "message", role: "developer", id: legacyEvidenceV3Id, content: "Previous platform-block guidance" },
@@ -63,6 +65,7 @@ test("retained routing and evidence guidance is upgraded without removing other 
   };
   addCodexEnvironment(body, "/tmp/omp-test");
   expect(body.input.some(item => item.id === legacyRoutingId || item.id === legacyRoutingV2Id || item.id === legacyEvidenceV1Id || item.id === legacyEvidenceV2Id || item.id === legacyEvidenceV3Id)).toBe(false);
+  expect(body.input.some(item => item.id === legacyRoutingV3Id)).toBe(false);
   expect(body.input).toContainEqual(otherDeveloper);
   expect(body.input).toContainEqual(quotedReport);
   const guidance = body.input.filter(item => item.role === "developer" && item.id !== "other");
@@ -106,6 +109,8 @@ test("mounted MCP discovery remains available with a small direct registry", () 
   expect(routing).toContain("content is a JSON string");
   expect(routing).toContain("browser_list_tabs device first");
   expect(routing).toContain("honor any current explicit rejection");
+  expect(routing).toContain("/mcp reload");
+  expect(routing).toContain("neither a reload receipt nor another successful Codex session proves");
   const rewritten = structuredClone(body);
   addCodexEnvironment(body, "/tmp/omp-test");
   expect(body).toEqual(rewritten);

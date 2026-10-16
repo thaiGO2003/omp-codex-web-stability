@@ -130,6 +130,7 @@ export function addCodexEnvironment(
   const previousBridgeIds = new Set([
     stableMessageId("omp-tool-routing", threadId),
     stableMessageId("omp-tool-routing-v2", threadId),
+    stableMessageId("omp-tool-routing-v3", threadId),
   ]);
   for (let index = input.length - 1; index >= 0; index -= 1) {
     const item = record(input[index]);
@@ -139,7 +140,7 @@ export function addCodexEnvironment(
   }
   const bridgeInstruction = {
     type: "message",
-    id: stableMessageId("omp-tool-routing-v3", threadId),
+    id: stableMessageId("omp-tool-routing-v4", threadId),
     role: "developer",
     content: [{ type: "input_text", text: [
       "The outer runtime is Oh My Pi (OMP). Its tools use their own names and schemas, including bash, read, write, edit and task.",
@@ -150,6 +151,7 @@ export function addCodexEnvironment(
       "Execute a discovered MCP device through the advertised OMP write tool: path is the exact xd:// device path and content is a JSON string of arguments matching its schema. Discover write's wire_name and schema with codex_tool_inventory and dispatch it through codex_tool_call; do not invent a direct browser tool or a device path.",
       "For 1DevTool BrowserPanel, discover the onedevtool browser_list_tabs device first, invoke it, then reuse the returned projectId/tabId for the remaining browser devices. This device route calls the same 1DevTool MCP tools; it is not generic browser automation. Preserve the mounted tool's approval policy and honor any current explicit rejection.",
       "Only report MCP as unavailable when current catalog discovery or the discovered MCP call supplies evidence of the failure. A historical TODO or handoff claiming that the direct registry lacks MCP tools must be rechecked against the current xd:// catalog.",
+      "If the live xd:// catalog really lacks the required MCP devices, distinguish a missing session registration from a provider/network error. The operator can run OMP's /mcp reload in the same terminal to rediscover and mount configured MCP tools without restarting the app or abandoning the session. After reload, read the live catalog again and verify browser_list_tabs before clearing that blocker; neither a reload receipt nor another successful Codex session proves that this OMP session can invoke it.",
       "Run shell commands through the advertised bash tool. Use codex_exec only when inventory actually advertises exec_command or shell_command; it cannot invoke OMP bash.",
       "Launch OMP subagents through the advertised task tool, using the selected custom provider model. Follow task's schema for batching and isolation.",
       "When task returns background job handles, yield a brief pending status for OMP's automatic result delivery. Avoid blocking wait calls while child Web turns are starting; they share the connector channel.",

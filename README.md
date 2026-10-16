@@ -112,6 +112,15 @@ through OMP's advertised `write` tool. This invokes the original MCP tool with
 its existing approval policy. For BrowserPanel, start with the discovered
 `browser_list_tabs` device and retain its returned project/tab IDs.
 
+If the live catalog also lacks the devices (for example it lists only
+`ast_edit`, `debug`, and `lsp`), run `/mcp reload` in that OMP terminal. This
+rediscovers configured servers and refreshes the session's registered tools.
+Then read `xd://` again and invoke the discovered `browser_list_tabs` device
+before clearing the blocker. A successful call from a different Codex session
+does not verify the affected OMP session. On the investigated host, a reload
+restored 38 onedevtool devices, including 16 browser tools; the exact reason
+the earlier session registration disappeared has not been established.
+
 Existing sessions receive the updated guidance on their next request after
 the shim reloads. Old routing messages are replaced without deleting tool
 results or other conversation instructions. A current catalog error or MCP

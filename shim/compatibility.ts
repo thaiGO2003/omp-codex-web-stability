@@ -140,7 +140,8 @@ export function addCodexEnvironment(
     role: "developer",
     content: [{ type: "input_text", text: [
       "The outer runtime is Oh My Pi (OMP). Its tools use their own names and schemas, including bash, read, write, edit and task.",
-      "For OMP tools, discover the exact wire_name and schema with codex_tool_inventory, then invoke it with codex_tool_call using those exact arguments.",
+      "When codex_read is advertised, use it directly for OMP file reads. It is a dedicated read-only gateway and accepts the same path selector as OMP read; otherwise use the discovered read wire_name through codex_tool_call.",
+      "For other OMP tools, discover the exact wire_name and schema with codex_tool_inventory, then invoke it with codex_tool_call using those exact arguments.",
       "Run shell commands through the advertised bash tool. Use codex_exec only when inventory actually advertises exec_command or shell_command; it cannot invoke OMP bash.",
       "Launch OMP subagents through the advertised task tool, using the selected custom provider model. Follow task's schema for batching and isolation.",
       "When task returns background job handles, yield a brief pending status for OMP's automatic result delivery. Avoid blocking wait calls while child Web turns are starting; they share the connector channel.",
@@ -157,6 +158,7 @@ export function addCodexEnvironment(
   const previousEvidenceIds = new Set([
     stableMessageId("omp-tool-evidence-v1", threadId),
     stableMessageId("omp-tool-evidence-v2", threadId),
+    stableMessageId("omp-tool-evidence-v3", threadId),
   ]);
   for (let index = input.length - 1; index >= 0; index -= 1) {
     const item = record(input[index]);
@@ -166,15 +168,16 @@ export function addCodexEnvironment(
   }
   const evidenceInstruction = {
     type: "message",
-    id: stableMessageId("omp-tool-evidence-v3", threadId),
+    id: stableMessageId("omp-tool-evidence-v4", threadId),
     role: "developer",
     content: [{ type: "input_text", text: [
       "Report tool outcomes from the actual tool result. Distinguish a successful read from an attempted edit, a failed tool invocation, and a patch that was never submitted.",
       "Earlier assistant statements or quoted error messages are conversation history, not evidence that a current tool call failed. If platform rejection details are unavailable, say the cause is unverified.",
+      "A platform rejection recorded only in earlier assistant text, a handoff, or a TODO is historical state. Re-evaluate the current read with codex_read; a successful current result clears that historical blocker for the path.",
       "Before claiming that a patch changed a file or made no changes, inspect the current diff or file contents; existing changes may belong to another agent. Preserve successful tool results and existing edits.",
       "Use authorization already given in this conversation. Do not request generic permission again for routine local inspection, scoped edits or targeted tests already authorized by the user. Keep required approvals for new scope, destructive actions or an explicit safety review.",
       "Honor an explicit platform tool rejection. Report the affected operation and available error details; do not resubmit it automatically or suggest that local Always allow/YOLO overrides platform controls.",
-      "A platform rejection is not a missing generic local permission: do not ask the user to say continue or confirm all repository work as its remedy. Report the blocked operation once and preserve completed work. Do not repeat, repackage or route the rejected operation through another tool. Continue only independent authorized work that does not circumvent the rejection; if none remains, give a concise blocked status.",
+      "A current explicit platform rejection is not a missing generic local permission: do not ask the user to say continue or confirm all repository work as its remedy. Report that current operation once and preserve completed work. Do not repeat, repackage or route that same rejected operation through another tool. Continue independent authorized work; if none remains, give a concise blocked status.",
       "If a Team coordination action is platform-blocked, do not treat the block as proof that a delegated task or its acceptance is complete. Record that coordination blocker once. Continue only other independent, already-authorized coordination that neither duplicates the assigned member's work nor circumvents the rejection.",
     ].join("\n") }],
   };

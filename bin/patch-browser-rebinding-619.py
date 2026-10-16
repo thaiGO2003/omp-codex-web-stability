@@ -11,7 +11,7 @@ spec.loader.exec_module(base)
 
 
 def replacements(name):
-    comparator = json.loads((ROOT / 'fixes/browser-rebinding.json').read_text())['patches'][0]['new']
+    comparator = (ROOT / 'fixes/browser-rebinding-comparator-619.js').read_text().rstrip()
     if name == 'cli.js':
         old_compare = 'p.evaluate((h,m)=>{let f=h.querySelectorAll("[data-user-message-bubble]"),w=f.length===1?f[0].querySelectorAll("[data-search-result-target]"):[],y=(g)=>g.replace(/\\r\\n?/g,`\n`);return w.length===1&&y(w[0].innerText)===y(m)},t.submittedText)'
         comparator = comparator.replace('m.evaluate(', 'p.evaluate(', 1)
@@ -43,11 +43,23 @@ def replacements(name):
 
 
 def patch_text(source, name):
+    patches = replacements(name)
+    if all(source.count(new) == 1 for _, new in patches):
+        return source
+
+    # Upgrade the first 6.1.9 patch in place. The other ownership anchors must
+    # already be exactly patched, so a mixed or unknown bundle is still refused.
+    previous = json.loads((ROOT / 'fixes/browser-rebinding.json').read_text())['patches'][0]['new']
+    if name == 'cli.js':
+        previous = previous.replace('m.evaluate(', 'p.evaluate(', 1)
+    if source.count(previous) == 1 and all(source.count(new) == 1 for _, new in patches[1:]):
+        return source.replace(previous, patches[0][1], 1)
+
     return base.patch_text(source, name, replacements)
 
 
 def main():
-    base.main('6.1.9', replacements)
+    base.main('6.1.9', replacements, patch_text)
 
 
 if __name__ == '__main__':

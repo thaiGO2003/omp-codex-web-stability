@@ -45,6 +45,24 @@ class Rebinding619InstallerTests(unittest.TestCase):
         self.assertEqual(self.snapshot(), installed)
         self.assertEqual(len(list((self.runtime.parent / 'codex-web-stability-backups').iterdir())), 1)
 
+    def test_619_upgrades_previous_complete_payload_comparator(self):
+        self.prepare_bundles()
+        previous = json.loads((ROOT / 'fixes/browser-rebinding.json').read_text())['patches'][0]['new']
+        for name in ('cli.js', 'browser-helper.cjs'):
+            path = self.runtime / 'app' / name
+            source = path.read_text()
+            patches = module.replacements(name)
+            old_previous = previous.replace('m.evaluate(', 'p.evaluate(', 1) if name == 'cli.js' else previous
+            source = source.replace(patches[0][0], old_previous, 1)
+            for old, new in patches[1:]:
+                source = source.replace(old, new, 1)
+            path.write_text(source)
+        self.save_manifest()
+        result = self.run_patch('patch-browser-rebinding-619.py')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in ('cli.js', 'browser-helper.cjs'):
+            self.assertIn('allowTruncatedPrefix', (self.runtime / 'app' / name).read_text())
+
     def test_619_wrong_version_corruption_and_partial_patch(self):
         self.prepare_bundles()
         path = self.runtime / 'manifest.json'

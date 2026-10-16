@@ -47,7 +47,7 @@ def patch_text(source, name, replacements_for=None):
     return source
 
 
-def main(version='6.1.7', replacements_for=None):
+def main(version='6.1.7', replacements_for=None, patcher=None):
     parser = argparse.ArgumentParser(description=f'Preserve connector ownership in Codex Web {version} Linux x64.')
     parser.add_argument('runtime', type=Path)
     parser.add_argument('--dry-run', action='store_true')
@@ -67,7 +67,10 @@ def main(version='6.1.7', replacements_for=None):
         record = records[0]
         if len(data) != record['size'] or hashlib.sha256(data).hexdigest() != record['sha256']:
             raise ValueError(f'{name}: existing manifest mismatch; no files changed')
-        patched = patch_text(data.decode(), name, replacements_for)
+        if patcher:
+            patched = patcher(data.decode(), name)
+        else:
+            patched = patch_text(data.decode(), name, replacements_for)
         if patched != data.decode():
             changes[path] = patched
         record['size'] = len(patched.encode())

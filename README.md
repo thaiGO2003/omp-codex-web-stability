@@ -46,8 +46,10 @@ The script is intentionally conservative: unknown helper layouts are reported in
 
 The 6.1.9 update replaces the previously patched browser bundles. Its saved-turn
 ownership comparison can reject a rendered connector mention even when the
-entire submitted task is unchanged. The shim also used to refuse silent
-replacement on every runtime except 6.1.7.
+submitted task is unchanged. Long tasks add another layout: ChatGPT may retain
+the complete submission while rendering only a long prefix in the saved user
+bubble. The shim also used to refuse silent replacement on every runtime except
+6.1.7.
 
 For the verified **6.1.9 Linux x64** runtime:
 
@@ -64,10 +66,13 @@ the launcher: a full launcher restart restores its packaged runtime and removes
 local browser patches. Reapply after a launcher restart or update.
 The browser patch checks
 both bundle hashes, backs up both bundles and the manifest, and updates integrity
-records together. It preserves complete-payload and selected-connector checks;
-it does not accept arbitrary replacement user turns. Windows browser bundles are
-not covered by this new patch. The regenerated PowerShell shim installers include
-the 6.1.9 lifecycle guard and cancellation acknowledgement validation.
+records together. It preserves complete-payload and selected-connector checks.
+For payloads of at least 65,536 characters, it also accepts a saved UI prefix
+only after at least 8,192 characters match and the app/turn structure matches;
+short, changed, foreign-app and competing turns are rejected. Windows browser
+bundles are not covered by this new patch. The regenerated PowerShell shim
+installers include the 6.1.9 lifecycle guard and cancellation acknowledgement
+validation.
 
 See [the 6.1.9 investigation and limits](docs/recovery-619.md). A submitted-turn
 failure does not by itself prove that tools never ran; the shim does not blindly

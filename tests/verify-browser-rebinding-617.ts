@@ -29,13 +29,16 @@ try {
     const state: any = { userIdentities: ["group:user:saved"], responseIdentities: ["group:assistant:saved"], turnIdentities: ["group:user:saved", "group:assistant:saved"] };
     const worker: any = { submissionDomState: async () => state, reconcileMultipartHistory: async () => {}, config: { appName: "Codex Native2" } };
     const html = (s: string) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\n", "<br>");
-    const scenarios = unpatched ? ["literal", "mention"] : ["literal", "mention", "layout", "escaped", "nested-link", "hydrating", "wrong-app", "changed-task", "extra-task", "duplicate-app", "duplicate-root", "competing-turn", "accepted-same-id", "accepted-foreign-id", "large-layout", "large-changed"];
+    const scenarios = unpatched ? ["literal", "mention"] : ["literal", "mention", "layout", "escaped", "nested-link", "hydrating", "wrong-app", "changed-task", "extra-task", "duplicate-app", "duplicate-root", "competing-turn", "accepted-same-id", "accepted-foreign-id", "large-layout", "large-changed", "large-truncated", "large-truncated-changed", "large-short-prefix", "large-truncated-wrong-app"];
     for (const scenario of scenarios) {
       baseline.acceptedUserIdentity = scenario === "accepted-same-id" ? "group:user:saved" : scenario === "accepted-foreign-id" ? "group:user:foreign" : undefined;
       baseline.submittedText = scenario.startsWith("large") ? "Complete context.\n" + "preserve  whitespace C:\\work. ".repeat(7000) : "Read task board.\nKeep  two spaces; path C:\\work and `code`.";
-      const payload = scenario === "changed-task" ? "Delete task board." : baseline.submittedText + (scenario === "extra-task" || scenario === "large-changed" ? " Extra request." : "");
+      let payload = scenario === "changed-task" ? "Delete task board." : baseline.submittedText + (scenario === "extra-task" || scenario === "large-changed" ? " Extra request." : "");
+      if (scenario.startsWith("large-truncated")) payload = baseline.submittedText.slice(0, 10165);
+      if (scenario === "large-truncated-changed") payload = payload.slice(0, 9000) + "X" + payload.slice(9001);
+      if (scenario === "large-short-prefix") payload = baseline.submittedText.slice(0, 4000);
       const saved = scenario === "escaped" ? payload.replace(/[\\`*_<:>"\[\]]/g, "\\$&") : payload;
-      const mention = `<span data-prompt-link-href="${scenario === "wrong-app" ? "app://foreign" : "app://fixture"}"${scenario.includes("layout") || scenario.startsWith("large") ? ' style="display:inline-flex"' : ""}><span${scenario.includes("layout") || scenario.startsWith("large") ? ' style="display:block"' : ""}>Codex Native2</span></span>`;
+      const mention = `<span data-prompt-link-href="${scenario === "wrong-app" || scenario === "large-truncated-wrong-app" ? "app://foreign" : "app://fixture"}"${scenario.includes("layout") || scenario.startsWith("large") ? ' style="display:inline-flex"' : ""}><span${scenario.includes("layout") || scenario.startsWith("large") ? ' style="display:block"' : ""}>Codex Native2</span></span>`;
       let content = scenario === "literal" ? html(payload) : mention + "  " + html(saved);
       if (scenario === "hydrating") content = "$codex-native2  " + html(payload);
       if (scenario === "nested-link") content = content.replace("Read task board.", 'Read <a data-search-result-target><span style="display:block">task board.</span></a>');
@@ -44,7 +47,7 @@ try {
       state.turnIdentities = ["group:user:saved", "group:assistant:saved", ...(scenario === "competing-turn" ? ["group:user:other"] : [])];
       state.userIdentities = ["group:user:saved", ...(scenario === "competing-turn" ? ["group:user:other"] : [])];
       const result = reconcile.call(worker, page, baseline, binding);
-      const reject = unpatched ? scenario === "mention" : ["wrong-app", "changed-task", "extra-task", "duplicate-app", "duplicate-root", "competing-turn", "accepted-foreign-id", "large-changed"].includes(scenario);
+      const reject = unpatched ? scenario === "mention" : ["wrong-app", "changed-task", "extra-task", "duplicate-app", "duplicate-root", "competing-turn", "accepted-foreign-id", "large-changed", "large-truncated-changed", "large-short-prefix", "large-truncated-wrong-app"].includes(scenario);
       if (reject) await assert.rejects(result, /bound assistant response was detached/);
       else if (scenario === "hydrating") assert.equal(await result, binding);
       else assert.equal((await result).identity, "group:assistant:saved");

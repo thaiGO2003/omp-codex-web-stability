@@ -1,5 +1,9 @@
 # Recovery checklist
 
+For new incidents, first run `bun bin/collect-diagnostics.ts --hours 24` from
+this repository. See [bounded diagnostic logging](diagnostics.md) for activation
+and how to distinguish queue waits, upstream failures and semantic timeouts.
+
 ## Recognize the bad state
 
 Common symptoms:

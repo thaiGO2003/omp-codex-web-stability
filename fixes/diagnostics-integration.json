@@ -1,0 +1,102 @@
+{
+  "replacements": [
+    {
+      "old": "import { translateToolCallIds, translateResponseStream } from \"./tool-call-ids\";\n\n",
+      "new": "import { translateToolCallIds, translateResponseStream } from \"./tool-call-ids\";\nimport { DiagnosticLog, errorFields } from \"./diagnostics\";\n\n"
+    },
+    {
+      "old": "const cwdHeader = \"x-omp-cwd\";\n\n",
+      "new": "const cwdHeader = \"x-omp-cwd\";\nconst diagnostics = new DiagnosticLog();\n\n"
+    },
+    {
+      "old": "  }\n  console.log(\"OMP interrupted native Web turn\", { thread: threadId.slice(0, 8), turn: turnId.slice(0, 8),\n    cancelledHttpTurns: acknowledgement.cancelled_http_turns, cancelledBrowserTurns: acknowledgement.cancelled_browser_turns });\n}\n",
+      "new": "  }\n  return acknowledgement;\n}\n"
+    },
+    {
+      "old": "  const previous = threadTails.get(threadId) ?? Promise.resolve();\n  const queued = threadTails.has(threadId);\n  let releaseCurrent!: () => void;\n",
+      "new": "  const previous = threadTails.get(threadId) ?? Promise.resolve();\n  let releaseCurrent!: () => void;\n"
+    },
+    {
+      "old": "\n  if (queued) console.log(\"OMP queue wait\", { thread: threadId.slice(0, 8) });\n  await previous.catch(() => {});\n  if (queued) console.log(\"OMP queue start\", { thread: threadId.slice(0, 8) });\n\n",
+      "new": "\n  await previous.catch(() => {});\n\n"
+    },
+    {
+      "old": "\nfunction releaseWhenDone(stream: ReadableStream<Uint8Array>, release: () => void) {\n  const reader = stream.getReader();\n",
+      "new": "\nfunction releaseWhenDone(stream: ReadableStream<Uint8Array>, release: () => void, finish: (outcome: string) => void) {\n  const reader = stream.getReader();\n"
+    },
+    {
+      "old": "          release();\n          controller.close();\n",
+      "new": "          release();\n          finish(\"eof\");\n          controller.close();\n"
+    },
+    {
+      "old": "        release();\n        controller.error(error);\n",
+      "new": "        release();\n        finish(\"error\");\n        controller.error(error);\n"
+    },
+    {
+      "old": "      release();\n      try {\n",
+      "new": "      release();\n      finish(\"cancelled\");\n      try {\n"
+    },
+    {
+      "old": "    if (incoming.pathname === \"/omp-shim-health\") {\n      return Response.json({ service: \"omp-codex-web-shim\", upstreamOrigin, listenPort });\n    }\n",
+      "new": "    if (incoming.pathname === \"/omp-shim-health\") {\n      return Response.json({ service: \"omp-codex-web-shim\", upstreamOrigin, listenPort, diagnostics: diagnostics.status() });\n    }\n",
+      "alternatives": [
+        {
+          "old": "    const incoming = new URL(req.url);\n    let pathname = incoming.pathname;\n",
+          "new": "    const incoming = new URL(req.url);\n    if (incoming.pathname === \"/omp-shim-health\") {\n      return Response.json({ service: \"omp-codex-web-shim\", upstreamOrigin, listenPort, diagnostics: diagnostics.status() });\n    }\n    let pathname = incoming.pathname;\n"
+        }
+      ]
+    },
+    {
+      "old": "    let turnId: string | undefined;\n    headers.delete(\"host\");\n",
+      "new": "    let turnId: string | undefined;\n    const requestId = crypto.randomUUID();\n    const startedAt = Date.now();\n    let logLogicalThreadId = threadId;\n    let logLogicalTurnId: string | undefined;\n    const log = (event: string, fields: Record<string, unknown> = {}) => diagnostics.log(event, {\n      requestId, logicalThreadId: logLogicalThreadId, logicalTurnId: logLogicalTurnId,\n      nativeThreadId: threadId, nativeTurnId: turnId, elapsedMs: Date.now() - startedAt, ...fields,\n    });\n    let finished = false;\n    const finish = (outcome: string) => { if (!finished) { finished = true; log(\"request_finished\", { outcome }); } };\n    const interrupt = async (phase: string) => {\n      log(\"cleanup_started\", { phase });\n      try {\n        const ack = await interruptNativeTurn(threadId, turnId);\n        log(\"cleanup_completed\", { phase, cancelledHttpTurns: ack?.cancelled_http_turns, cancelledBrowserTurns: ack?.cancelled_browser_turns });\n      } catch (error) { log(\"cleanup_failed\", { phase, ...errorFields(error) }); throw error; }\n    };\n    log(\"request_received\");\n    headers.delete(\"host\");\n"
+    },
+    {
+      "old": "    if (req.method !== \"GET\" && req.method !== \"HEAD\") {\n      const bytes = new Uint8Array(await req.arrayBuffer());\n      body = bytes;\n",
+      "new": "    if (req.method !== \"GET\" && req.method !== \"HEAD\") {\n      const bytes = new Uint8Array(await req.arrayBuffer().catch(error => { log(\"upstream_error\", errorFields(error)); finish(\"error\"); throw error; }));\n      body = bytes;\n"
+    },
+    {
+      "old": "          if (labelResponse) {\n            console.log(\"OMP local task label\", { model: parsed!.model });\n            return labelResponse;\n",
+      "new": "          if (labelResponse) {\n            log(\"local_response\");\n            finish(\"local\");\n            return labelResponse;\n"
+    },
+    {
+      "old": "            ));\n            console.log(\"OMP request\", {\n              model: parsed.model, cwd: sessionCwd,\n              thread: String(metadata.thread_id).slice(0, 8),\n              turn: String(metadata.turn_id).slice(0, 8),\n              inputItems: Array.isArray(parsed.input) ? parsed.input.length : 0,\n            });\n            headers.delete(\"content-length\");\n          }\n        } catch {\n          // Forward the original body unchanged; upstream will return the real protocol error.\n",
+      "new": "            ));\n            logLogicalThreadId = threadId;\n            logLogicalTurnId = turnId;\n            headers.delete(\"content-length\");\n          }\n        } catch (error) {\n          log(\"request_rewrite_failed\", errorFields(error));\n          // Forward the original body unchanged; upstream will return the real protocol error.\n"
+    },
+    {
+      "old": "      && (incoming.pathname === \"/v1/codex/responses\" || incoming.pathname === \"/v1/codex/responses/compact\");\n    const releaseThread = shouldSerialize ? await acquireThread(threadId!) : undefined;\n\n",
+      "new": "      && (incoming.pathname === \"/v1/codex/responses\" || incoming.pathname === \"/v1/codex/responses/compact\");\n    const queueStartedAt = Date.now();\n    const queued = Boolean(shouldSerialize && threadTails.has(threadId!));\n    if (queued) log(\"queue_wait\", { queued });\n    const releaseThread = shouldSerialize ? await acquireThread(threadId!) : undefined;\n    log(\"queue_acquired\", { queued, queueMs: Date.now() - queueStartedAt });\n\n"
+    },
+    {
+      "old": "    } catch (error) {\n      releaseThread?.();\n",
+      "new": "    } catch (error) {\n      log(\"upstream_error\", errorFields(error));\n      finish(\"error\");\n      releaseThread?.();\n"
+    },
+    {
+      "old": "      && upstream.headers.get(\"content-type\")?.includes(\"text/event-stream\") && upstream.body;\n    const responseHeaders = new Headers(upstream.headers);\n",
+      "new": "      && upstream.headers.get(\"content-type\")?.includes(\"text/event-stream\") && upstream.body;\n    log(\"upstream_headers\", { httpStatus: upstream.status, sse: Boolean(isOmpStream) });\n    const responseHeaders = new Headers(upstream.headers);\n"
+    },
+    {
+      "old": "    const guardedBody = isOmpStream && threadId && turnId ? guardResponseStream(upstream.body!, {\n      onStall: () => interruptNativeTurn(threadId, turnId),\n      onCancel: () => interruptNativeTurn(threadId, turnId),\n      onRecover: typeof body === \"string\" && hasCompleteRecoveryInput(JSON.parse(body))\n",
+      "new": "    const guardedBody = isOmpStream && threadId && turnId ? guardResponseStream(upstream.body!, {\n      onDiagnostic: log,\n      onStall: () => interrupt(\"stall\"),\n      onCancel: () => interrupt(\"cancel\"),\n      onRecover: typeof body === \"string\" && hasCompleteRecoveryInput(JSON.parse(body))\n"
+    },
+    {
+      "old": "          });\n          if (!health.ok || ![\"6.1.7\", \"6.1.9\"].includes((await health.json()).version)) {\n            throw new Error(\"Silent recovery requires a verified Codex Web 6.1.7 or 6.1.9 lifecycle\");\n",
+      "new": "          });\n          log(\"upstream_headers\", { phase: \"health\", httpStatus: health.status });\n          const lifecycleVerified = health.ok && [\"6.1.7\", \"6.1.9\"].includes((await health.json()).version);\n          log(\"recovery_lifecycle\", { lifecycleVerified });\n          if (!lifecycleVerified) {\n            throw new Error(\"Silent recovery requires a verified Codex Web 6.1.7 or 6.1.9 lifecycle\");\n"
+    },
+    {
+      "old": "          const deadline = setTimeout(() => connect.abort(), 20_000);\n          let replacement: Response;\n",
+      "new": "          const deadline = setTimeout(() => connect.abort(), 20_000);\n          log(\"recovery_connecting\", { phase: \"connect\", attempt: 1 });\n          let replacement: Response;\n"
+    },
+    {
+      "old": "          // The connection deadline ends at headers; generation keeps its semantic budget.\n          if (!replacement.ok || !replacement.body || !replacement.headers.get(\"content-type\")?.includes(\"text/event-stream\")) {\n",
+      "new": "          // The connection deadline ends at headers; generation keeps its semantic budget.\n          log(\"upstream_headers\", { httpStatus: replacement.status, sse: Boolean(replacement.headers.get(\"content-type\")?.includes(\"text/event-stream\")), attempt: 1 });\n          if (!replacement.ok || !replacement.body || !replacement.headers.get(\"content-type\")?.includes(\"text/event-stream\")) {\n"
+    },
+    {
+      "old": "    const responseBody = isOmpStream ? translateResponseStream(guardedBody!) : guardedBody;\n    const serializedBody = releaseThread && responseBody\n      ? releaseWhenDone(responseBody, releaseThread)\n      : responseBody;\n    if (releaseThread && !serializedBody) releaseThread();\n    return new Response(serializedBody, {\n",
+      "new": "    const responseBody = isOmpStream ? translateResponseStream(guardedBody!) : guardedBody;\n    const serializedBody = responseBody\n      ? releaseWhenDone(responseBody, releaseThread ?? (() => {}), finish)\n      : responseBody;\n    if (releaseThread && !serializedBody) releaseThread();\n    if (!serializedBody) finish(upstream.ok ? \"no_body\" : \"http_error\");\n    return new Response(serializedBody, {\n"
+    },
+    {
+      "old": "\nconsole.log(`OMP shim listening on http://${listenHost}:${listenPort}`);\n",
+      "new": "\ndiagnostics.log(\"shim_started\");\nconsole.log(`OMP shim listening on http://${listenHost}:${listenPort}; structured diagnostics enabled`);\n"
+    }
+  ]
+}

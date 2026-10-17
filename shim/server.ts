@@ -5,11 +5,13 @@ import { RecoveryIdentityStore } from "./sse-watchdog";
 import { record, addCodexEnvironment } from "./compatibility";
 import { taskLabelResponse } from "./task-label";
 import { translateToolCallIds, translateResponseStream } from "./tool-call-ids";
+import { DiagnosticLog, errorFields } from "./diagnostics";
 
 const listenHost = "127.0.0.1";
 const listenPort = Number(process.env.OMP_CODEX_WEB_SHIM_PORT || 17842);
 const upstreamOrigin = process.env.OMP_CODEX_WEB_UPSTREAM || "http://127.0.0.1:17841";
 const cwdHeader = "x-omp-cwd";
+const diagnostics = new DiagnosticLog();
 
 
 async function interruptNativeTurn(threadId: string | undefined, turnId: string | undefined) {
@@ -30,8 +32,7 @@ async function interruptNativeTurn(threadId: string | undefined, turnId: string 
     || !Number.isInteger(acknowledgement.cancelled_browser_turns) || acknowledgement.cancelled_browser_turns < 0) {
     throw new Error("Native turn interruption returned an invalid acknowledgement");
   }
-  console.log("OMP interrupted native Web turn", { thread: threadId.slice(0, 8), turn: turnId.slice(0, 8),
-    cancelledHttpTurns: acknowledgement.cancelled_http_turns, cancelledBrowserTurns: acknowledgement.cancelled_browser_turns });
+  return acknowledgement;
 }
 
 const threadTails = new Map<string, Promise<void>>();
@@ -39,15 +40,12 @@ const recoveryIdentities = new RecoveryIdentityStore();
 
 async function acquireThread(threadId: string) {
   const previous = threadTails.get(threadId) ?? Promise.resolve();
-  const queued = threadTails.has(threadId);
   let releaseCurrent!: () => void;
   const current = new Promise<void>(resolve => { releaseCurrent = resolve; });
   const tail = previous.catch(() => {}).then(() => current);
   threadTails.set(threadId, tail);
 
-  if (queued) console.log("OMP queue wait", { thread: threadId.slice(0, 8) });
   await previous.catch(() => {});
-  if (queued) console.log("OMP queue start", { thread: threadId.slice(0, 8) });
 
   let released = false;
   return () => {
@@ -58,7 +56,7 @@ async function acquireThread(threadId: string) {
   };
 }
 
-function releaseWhenDone(stream: ReadableStream<Uint8Array>, release: () => void) {
+function releaseWhenDone(stream: ReadableStream<Uint8Array>, release: () => void, finish: (outcome: string) => void) {
   const reader = stream.getReader();
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
@@ -66,17 +64,20 @@ function releaseWhenDone(stream: ReadableStream<Uint8Array>, release: () => void
         const { done, value } = await reader.read();
         if (done) {
           release();
+          finish("eof");
           controller.close();
           return;
         }
         controller.enqueue(value);
       } catch (error) {
         release();
+        finish("error");
         controller.error(error);
       }
     },
     async cancel(reason) {
       release();
+      finish("cancelled");
       try {
         await reader.cancel(reason);
       } catch {
@@ -104,7 +105,7 @@ Bun.serve({
   async fetch(req) {
     const incoming = new URL(req.url);
     if (incoming.pathname === "/omp-shim-health") {
-      return Response.json({ service: "omp-codex-web-shim", upstreamOrigin, listenPort });
+      return Response.json({ service: "omp-codex-web-shim", upstreamOrigin, listenPort, diagnostics: diagnostics.status() });
     }
     let pathname = incoming.pathname;
 
@@ -117,12 +118,30 @@ Bun.serve({
     const headerTurnMetadata = headers.get("x-codex-turn-metadata") ?? undefined;
     let threadId = threadIdFromMetadata(headerTurnMetadata);
     let turnId: string | undefined;
+    const requestId = crypto.randomUUID();
+    const startedAt = Date.now();
+    let logLogicalThreadId = threadId;
+    let logLogicalTurnId: string | undefined;
+    const log = (event: string, fields: Record<string, unknown> = {}) => diagnostics.log(event, {
+      requestId, logicalThreadId: logLogicalThreadId, logicalTurnId: logLogicalTurnId,
+      nativeThreadId: threadId, nativeTurnId: turnId, elapsedMs: Date.now() - startedAt, ...fields,
+    });
+    let finished = false;
+    const finish = (outcome: string) => { if (!finished) { finished = true; log("request_finished", { outcome }); } };
+    const interrupt = async (phase: string) => {
+      log("cleanup_started", { phase });
+      try {
+        const ack = await interruptNativeTurn(threadId, turnId);
+        log("cleanup_completed", { phase, cancelledHttpTurns: ack?.cancelled_http_turns, cancelledBrowserTurns: ack?.cancelled_browser_turns });
+      } catch (error) { log("cleanup_failed", { phase, ...errorFields(error) }); throw error; }
+    };
+    log("request_received");
     headers.delete("host");
     headers.delete(cwdHeader);
 
     let body: BodyInit | undefined;
     if (req.method !== "GET" && req.method !== "HEAD") {
-      const bytes = new Uint8Array(await req.arrayBuffer());
+      const bytes = new Uint8Array(await req.arrayBuffer().catch(error => { log("upstream_error", errorFields(error)); finish("error"); throw error; }));
       body = bytes;
       if (incoming.pathname === "/v1/codex/responses"
         && headers.get("content-type")?.includes("application/json")) {
@@ -130,7 +149,8 @@ Bun.serve({
           const parsed = record(JSON.parse(new TextDecoder().decode(bytes)));
           const labelResponse = parsed && taskLabelResponse(parsed);
           if (labelResponse) {
-            console.log("OMP local task label", { model: parsed!.model });
+            log("local_response");
+            finish("local");
             return labelResponse;
           }
           const sessionCwd = typeof parsed?.__omp_cwd === "string" && isAbsolute(parsed.__omp_cwd)
@@ -151,15 +171,12 @@ Bun.serve({
             headers.set("x-codex-turn-metadata", JSON.stringify(headerMetadata).replace(
               /[\x7f-\uffff]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
             ));
-            console.log("OMP request", {
-              model: parsed.model, cwd: sessionCwd,
-              thread: String(metadata.thread_id).slice(0, 8),
-              turn: String(metadata.turn_id).slice(0, 8),
-              inputItems: Array.isArray(parsed.input) ? parsed.input.length : 0,
-            });
+            logLogicalThreadId = threadId;
+            logLogicalTurnId = turnId;
             headers.delete("content-length");
           }
-        } catch {
+        } catch (error) {
+          log("request_rewrite_failed", errorFields(error));
           // Forward the original body unchanged; upstream will return the real protocol error.
         }
       }
@@ -167,7 +184,11 @@ Bun.serve({
 
     const shouldSerialize = Boolean(threadId)
       && (incoming.pathname === "/v1/codex/responses" || incoming.pathname === "/v1/codex/responses/compact");
+    const queueStartedAt = Date.now();
+    const queued = Boolean(shouldSerialize && threadTails.has(threadId!));
+    if (queued) log("queue_wait", { queued });
     const releaseThread = shouldSerialize ? await acquireThread(threadId!) : undefined;
+    log("queue_acquired", { queued, queueMs: Date.now() - queueStartedAt });
 
     const logicalThreadId = threadId;
     const logicalTurnId = turnId;
@@ -192,24 +213,31 @@ Bun.serve({
         signal: req.signal,
       });
     } catch (error) {
+      log("upstream_error", errorFields(error));
+      finish("error");
       releaseThread?.();
       throw error;
     }
 
     const isOmpStream = incoming.pathname === "/v1/codex/responses"
       && upstream.headers.get("content-type")?.includes("text/event-stream") && upstream.body;
+    log("upstream_headers", { httpStatus: upstream.status, sse: Boolean(isOmpStream) });
     const responseHeaders = new Headers(upstream.headers);
     if (isOmpStream) responseHeaders.delete("content-length");
     const guardedBody = isOmpStream && threadId && turnId ? guardResponseStream(upstream.body!, {
-      onStall: () => interruptNativeTurn(threadId, turnId),
-      onCancel: () => interruptNativeTurn(threadId, turnId),
+      onDiagnostic: log,
+      onStall: () => interrupt("stall"),
+      onCancel: () => interrupt("cancel"),
       onRecover: typeof body === "string" && hasCompleteRecoveryInput(JSON.parse(body))
         ? async signal => {
           // This native version waits for the old owner's physical retirement.
           const health = await fetch(new URL("/healthz", upstreamOrigin), {
             signal: AbortSignal.any([req.signal, signal, AbortSignal.timeout(5000)]),
           });
-          if (!health.ok || !["6.1.7", "6.1.9"].includes((await health.json()).version)) {
+          log("upstream_headers", { phase: "health", httpStatus: health.status });
+          const lifecycleVerified = health.ok && ["6.1.7", "6.1.9"].includes((await health.json()).version);
+          log("recovery_lifecycle", { lifecycleVerified });
+          if (!lifecycleVerified) {
             throw new Error("Silent recovery requires a verified Codex Web 6.1.7 or 6.1.9 lifecycle");
           }
           // The old identity is permanently cancelled by the native runtime.
@@ -220,6 +248,7 @@ Bun.serve({
           turnId = owner.turnId;
           const connect = new AbortController();
           const deadline = setTimeout(() => connect.abort(), 20_000);
+          log("recovery_connecting", { phase: "connect", attempt: 1 });
           let replacement: Response;
           try {
             replacement = await fetch(upstreamUrl, {
@@ -228,6 +257,7 @@ Bun.serve({
             });
           } finally { clearTimeout(deadline); }
           // The connection deadline ends at headers; generation keeps its semantic budget.
+          log("upstream_headers", { httpStatus: replacement.status, sse: Boolean(replacement.headers.get("content-type")?.includes("text/event-stream")), attempt: 1 });
           if (!replacement.ok || !replacement.body || !replacement.headers.get("content-type")?.includes("text/event-stream")) {
             await replacement.body?.cancel();
             throw new Error(`Silent recovery upstream HTTP ${replacement.status}; expected SSE`);
@@ -236,10 +266,11 @@ Bun.serve({
         } : undefined,
     }) : upstream.body;
     const responseBody = isOmpStream ? translateResponseStream(guardedBody!) : guardedBody;
-    const serializedBody = releaseThread && responseBody
-      ? releaseWhenDone(responseBody, releaseThread)
+    const serializedBody = responseBody
+      ? releaseWhenDone(responseBody, releaseThread ?? (() => {}), finish)
       : responseBody;
     if (releaseThread && !serializedBody) releaseThread();
+    if (!serializedBody) finish(upstream.ok ? "no_body" : "http_error");
     return new Response(serializedBody, {
       status: upstream.status,
       statusText: upstream.statusText,
@@ -248,4 +279,5 @@ Bun.serve({
   },
 });
 
-console.log(`OMP shim listening on http://${listenHost}:${listenPort}`);
+diagnostics.log("shim_started");
+console.log(`OMP shim listening on http://${listenHost}:${listenPort}; structured diagnostics enabled`);

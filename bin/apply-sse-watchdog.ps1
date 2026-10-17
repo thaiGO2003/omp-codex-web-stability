@@ -151,6 +151,7 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
   onStall: () => Promise<void>;
   onCancel: () => Promise<void>;
   onRecover?: (signal: AbortSignal) => Promise<ReadableStream<Uint8Array>>;
+  onDiagnostic?: (event: string, fields: Record<string, unknown>) => void;
 }): ReadableStream<Uint8Array> {
   const timeoutMs = options.timeoutMs ?? 240_000;
   let reader = source.getReader();
@@ -168,9 +169,26 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
   let cleanup: Promise<boolean> | undefined;
   let recovering: Promise<void> | undefined;
   let observe: (chunk: Uint8Array) => void = () => {};
+  const startedAt = Date.now();
+  let lastSemanticAt = startedAt;
+  let lastReportAt = startedAt;
+  let events = 0;
+  let bytes = 0;
+  let eventType = "unknown";
+  const emit = (event: string, fields: Record<string, unknown> = {}) => {
+    try { options.onDiagnostic?.(event, { elapsedMs: Date.now() - startedAt, idleMs: Date.now() - lastSemanticAt,
+      events, bytes, sawOutput, recoveries, terminal, responseId, eventType, ...fields }); } catch { /* logging is optional */ }
+  };
+  const errorInfo = (error: unknown) => {
+    const value = error && typeof error === "object" ? error as Record<string, unknown> : {};
+    const cause = value.cause && typeof value.cause === "object" ? value.cause as Record<string, unknown> : {};
+    return { errorName: value.name, errorCode: value.code ?? cause.code };
+  };
+  emit("stream_started", { timeoutMs, recoveryEligible: Boolean(options.onRecover) });
   const clear = () => { clearTimeout(timer); timer = undefined; };
   const retire = (callback: () => Promise<void>) => cleanup ??= Promise.resolve().then(callback).then(() => true, error => {
-    console.warn("OMP Web turn cleanup failed", error instanceof Error ? error.message : String(error));
+    console.warn("OMP Web turn cleanup failed");
+    emit("cleanup_failed", errorInfo(error));
     return false;
   });
 
@@ -181,7 +199,8 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
         if (closed || terminal) return;
         timer = setTimeout(() => {
           if (closed || terminal || recovering) return;
-          console.warn("OMP Web semantic timeout", { timeoutMs, responseId, sawOutput, recoveries });
+          console.warn("OMP Web semantic timeout", { timeoutMs, sawOutput, recoveries });
+          emit("semantic_timeout", { timeoutMs, recoveryEligible: !sawOutput && recoveries === 0 && Boolean(options.onRecover) });
           recovering = (async () => {
             // Revoke the old native turn before opening a replacement browser.
             const retired = await retire(options.onStall);
@@ -190,6 +209,7 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
             if (retired && !terminal && !sawOutput && recoveries === 0 && options.onRecover) {
               recoveries++;
               cleanup = undefined;
+              emit("recovery_started");
               try {
                 const next = await options.onRecover(recoveryAbort.signal);
                 if (closed) { await next.cancel().catch(() => {}); return; }
@@ -199,16 +219,19 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
                 responseId = "";
                 sequence = 0;
                 console.log("OMP Web silent recovery", { attempt: recoveries });
+                emit("recovery_connected", { attempt: recoveries });
                 arm();
                 return;
               } catch (error) {
                 if (closed) return;
-                console.warn("OMP Web silent recovery failed", error instanceof Error ? error.message : String(error));
+                console.warn("OMP Web silent recovery failed");
+                emit("recovery_failed", errorInfo(error));
                 await retire(options.onCancel);
               }
             }
             if (closed) return;
             closed = true;
+            emit("recovery_stopped", { errorCode: "chatgpt_web_recovery_stopped" });
             const failure = { type: "response.failed", sequence_number: sequence++, retryable: false, response: {
               id: responseId || "resp_omp_stalled", status: "failed", output: [],
               error: { type: "invalid_request_error", code: "chatgpt_web_recovery_stopped", retryable: false, status: 409,
@@ -222,6 +245,7 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
         }, timeoutMs);
       };
       observe = (chunk: Uint8Array) => {
+        bytes += chunk.byteLength;
         pending += decoder.decode(chunk, { stream: true });
         let end: number;
         while ((end = pending.indexOf("\n")) >= 0) {
@@ -230,16 +254,27 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
           if (!line.startsWith("data:")) continue;
           try {
             const event = JSON.parse(line.slice(5).trim());
+            events++;
             if (typeof event.sequence_number === "number") sequence = Math.max(sequence, event.sequence_number + 1);
             if (typeof event.response?.id === "string") responseId = event.response.id;
             if (["response.completed", "response.incomplete", "response.done", "response.failed", "error"].includes(event.type)) {
               terminal = true;
+              eventType = event.type;
               clear();
+              emit("stream_terminal", { eventType: event.type, errorCode: event.response?.error?.code ?? event.error?.code ?? event.code });
             } else if (event.type === "response.created" || /^response\.(output_item|content_part|reasoning_summary_part)\.(added|done)$/.test(event.type)
               || /^response\.(output_text|reasoning_text|reasoning_summary_text|refusal|function_call_arguments|custom_tool_call_input)\.(delta|done)$/.test(event.type)) {
+              const hadOutput = sawOutput;
               if (event.type !== "response.created") sawOutput = true;
               // A created event that already carries output is also unsafe to replay.
               if (Array.isArray(event.response?.output) && event.response.output.length) sawOutput = true;
+              const firstProgress = eventType === "unknown";
+              eventType = event.type;
+              lastSemanticAt = Date.now();
+              if (firstProgress || (!hadOutput && sawOutput) || Date.now() - lastReportAt >= 30_000) {
+                emit("stream_progress");
+                lastReportAt = Date.now();
+              }
               arm();
             }
           } catch { /* keep original bytes intact */ }
@@ -269,6 +304,7 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
           if (done) {
             closed = true;
             clear();
+            emit("stream_eof");
             controller.close();
           } else {
             observe(value);
@@ -281,6 +317,7 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
           if (activeReader !== reader) continue;
           closed = true;
           clear();
+          emit("stream_error", errorInfo(error));
           if (!terminal) await retire(options.onCancel);
           controller.error(error);
         }
@@ -290,6 +327,7 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
       if (closed) return;
       closed = true;
       clear();
+      emit("stream_cancelled");
       recoveryAbort.abort(reason);
       if (!terminal) await retire(options.onCancel);
       await reader.cancel(reason).catch(() => {});

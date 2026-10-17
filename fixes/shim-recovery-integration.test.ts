@@ -3,6 +3,7 @@ import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { readDiagnostics } from "../bin/collect-diagnostics";
 
 const encoder = new TextEncoder();
 const frame = (event: object) => encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
@@ -64,7 +65,8 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
       source += '\nconsole.log("FIXTURE_PORT=" + fixtureServer.port);\n';
       await writeFile(join(dir, "server.ts"), source);
       child = Bun.spawn([process.execPath, join(dir, "server.ts")], {
-        env: { ...process.env, OMP_CODEX_WEB_SHIM_PORT: "0", OMP_CODEX_WEB_UPSTREAM: `http://127.0.0.1:${native.port}`, CODEX_CHATGPT_WEB_HOME: dir },
+        env: { ...process.env, OMP_CODEX_WEB_SHIM_PORT: "0", OMP_CODEX_WEB_UPSTREAM: `http://127.0.0.1:${native.port}`, CODEX_CHATGPT_WEB_HOME: dir,
+          OMP_CODEX_WEB_LOG_DIR: join(dir, "logs") },
         stdout: "pipe", stderr: "pipe",
       });
       const reader = child.stdout.getReader();
@@ -134,6 +136,26 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
         expect(nextMetadata.thread_id).toBe(recoveredMetadata.thread_id);
         expect(nextMetadata.turn_id).not.toBe(recoveredMetadata.turn_id);
       } else expect(output).toContain("chatgpt_web_recovery_stopped");
+      const health = await (await fetch(`http://127.0.0.1:${port}/omp-shim-health`)).json();
+      expect(health.diagnostics.enabled).toBe(true);
+      expect(health.diagnostics.failedWrites).toBe(0);
+      const rows = readDiagnostics(join(dir, "logs"), 0).records;
+      const firstRequest = rows.find(row => row.event === "request_received")!.requestId;
+      const requestRows = rows.filter(row => row.requestId === firstRequest);
+      expect(requestRows.find(row => row.event === "upstream_headers")?.httpStatus).toBe(200);
+      expect(requestRows.some(row => row.event === "semantic_timeout")).toBe(true);
+      expect(requestRows.some(row => row.event === "request_finished")).toBe(true);
+      expect(requestRows.some(row => row.event === "recovery_connected")).toBe(eligible);
+      if (eligible) {
+        const owners = new Set(requestRows.filter(row => row.event === "upstream_headers").map(row => row.nativeThreadId));
+        expect(owners.size).toBe(2);
+        expect(requestRows.filter(row => row.event === "stream_terminal").at(-1)?.eventType).toBe("response.completed");
+      }
+      if (scenario === "unsupported_version") expect(requestRows.find(row => row.event === "recovery_lifecycle")?.lifecycleVerified).toBe(false);
+      const diagnosticText = JSON.stringify(rows);
+      for (const secret of ["fixture-control", "Continue the isolated fixture", "HTTP_RECOVERED", "failed: exit 7", "thread_fixture", dir]) {
+        expect(diagnosticText).not.toContain(secret);
+      }
     } finally {
       child?.kill();
       if (child) await child.exited;

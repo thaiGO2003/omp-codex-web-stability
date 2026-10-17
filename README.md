@@ -85,6 +85,38 @@ Recovery must use fresh native ownership because 6.1.9 remembers cancelled
 thread/turn identities. See the October 17 section of the investigation for
 validation and limits. The generated full Windows Web setup includes this fix.
 
+## Bounded diagnostic logs
+
+The full shim now records request/queue timing, upstream HTTP status, semantic
+progress, terminal error codes, scoped interruption and recovery ownership in
+structured JSONL. Conversation content, tool arguments/results, file contents,
+paths and authentication headers are excluded. Thread/turn/response identifiers
+are hashed for correlation. Retention is **five files of up to 2 MiB each**.
+
+Upgrade an existing shim (does not restart it):
+
+```bash
+python3 bin/apply-diagnostics.py --dry-run
+python3 bin/apply-diagnostics.py
+# Only after its requests finish:
+systemctl --user restart codex-chatgpt-web-omp-shim.service
+```
+
+New Windows full installs include the logger automatically. The default log
+directory on both platforms is `~/.codex-chatgpt-web/diagnostics/omp-shim/`;
+`CODEX_CHATGPT_WEB_HOME` or `OMP_CODEX_WEB_LOG_DIR` can change it.
+
+When an interruption occurs, export recent sanitized events and local health
+snapshots from the repository directory:
+
+```bash
+bun bin/collect-diagnostics.ts --hours 24
+```
+
+This creates a local `omp-diagnostics-*.json.gz` report without uploading it.
+The same command works in PowerShell. See [diagnostic logging](docs/diagnostics.md)
+for custom ports, event interpretation, retention and activation checks.
+
 ## Fix Failed to fetch without losing the OMP session
 
 The new [6.1.7 fetch recovery patch](docs/fetch-recovery.md) recognizes failed

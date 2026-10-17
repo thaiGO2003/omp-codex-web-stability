@@ -18,6 +18,7 @@ const eventTypes = new Set([
 const errorCodes = new Set([
   "chatgpt_fetch_failed", "chatgpt_submission_ambiguous", "chatgpt_submitted_turn_failed", "model_version_unavailable",
   "connector_not_found", "chatgpt_web_semantic_timeout", "chatgpt_web_recovery_stopped", "network_error",
+  "server_is_overloaded", "chatgpt_composer_check_required",
   "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE", "ENOTFOUND", "UND_ERR_SOCKET",
 ]);
 const numericFields = new Set([

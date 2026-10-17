@@ -3,6 +3,7 @@ import { guardResponseStream, hasCompleteRecoveryInput, RecoveryIdentityStore } 
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { normalizeComposerFailure, translateResponseStream } from "../shim/tool-call-ids";
 
 const modulesRoot = process.env.OMP_GLOBAL_NODE_MODULES || join(homedir(), ".bun/install/global/node_modules");
 const providerPath = join(modulesRoot, "@oh-my-pi/pi-ai/src/providers/openai-codex-responses.ts");
@@ -310,4 +311,53 @@ providerTest("exhausted browser recovery does not enter OMP's generic network re
   expect(result.stopReason).toBe("error");
   expect(result.errorMessage).toContain("chatgpt_recovery_stopped");
   expect(AIError.retriable(AIError.classifyMessage(result))).toBe(false);
+});
+
+test("only the exact composer UI failure is normalized; real overload and tool content survive", () => {
+  const message = "ChatGPT composer is unavailable. Reload ChatGPT and retry the task.";
+  for (const event of [
+    { type: "error", code: "server_is_overloaded", message, retryable: true },
+    { type: "error", error: { code: "server_is_overloaded", message }, message, retryable: true },
+    { type: "response.failed", response: { error: { code: "server_is_overloaded", message } } },
+  ]) {
+    expect(normalizeComposerFailure(event)).toBe(true);
+    const error = event.type === "error" ? event.error ?? event : event.response!.error;
+    expect(error.code).toBe("chatgpt_composer_check_required");
+    expect(error.retryable).toBe(false);
+    expect(error.message).not.toContain("overload");
+  }
+  for (const event of [
+    { type: "error", code: "server_is_overloaded", message: "Service is overloaded. Try later." },
+    { type: "error", code: "chatgpt_tool_approval_required", message },
+    { type: "response.output_text.delta", delta: message },
+    { type: "response.output_item.done", item: { type: "function_call", arguments: JSON.stringify({ code: "server_is_overloaded", message }) } },
+  ]) {
+    const before = structuredClone(event);
+    expect(normalizeComposerFailure(event)).toBe(false);
+    expect(event).toEqual(before);
+  }
+});
+
+providerTest("composer precondition stops OMP's outer overload retry loop after translation", async () => {
+  const { streamOpenAICodexResponses } = await import(providerPath);
+  const AIError = await import(join(modulesRoot, "@oh-my-pi/pi-ai/src/error/index.ts"));
+  const { getBundledModels } = await import(catalogPath);
+  const model = { ...getBundledModels("openai-codex")[0], id: "chatgpt-web/gpt-5.6-sol", provider: "codex-chatgpt-web", baseUrl: "http://127.0.0.1:9999/v1" };
+  const message = "ChatGPT composer is unavailable. Reload ChatGPT and retry the task.";
+  expect(AIError.retriable(AIError.classifyMessage({ api: model.api, errorMessage: `Codex response failed: ${message} (code=server_is_overloaded, status=failed)` }))).toBe(true);
+  for (const event of [
+    { type: "error", code: "server_is_overloaded", message, retryable: true },
+    { type: "error", error: { code: "server_is_overloaded", message }, message, retryable: true },
+    { type: "response.failed", response: { status: "failed", error: { code: "server_is_overloaded", message } } },
+  ]) {
+    let requests = 0;
+    const result = await streamOpenAICodexResponses(model, { messages: [{ role: "user", content: "Test", timestamp: Date.now() }] }, {
+      apiKey: "local-test", preferWebsockets: false,
+      fetch: async () => { requests++; return new Response(translateResponseStream(new Response(frame(event)).body!), { headers: { "content-type": "text/event-stream" } }); },
+    }).result();
+    expect(requests).toBe(1);
+    expect(result.stopReason).toBe("error");
+    expect(result.errorMessage).toContain("chatgpt_composer_check_required");
+    expect(AIError.retriable(AIError.classifyMessage(result))).toBe(false);
+  }
 });

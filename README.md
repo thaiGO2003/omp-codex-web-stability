@@ -85,6 +85,18 @@ Recovery must use fresh native ownership because 6.1.9 remembers cancelled
 thread/turn identities. See the October 17 section of the investigation for
 validation and limits. The generated full Windows Web setup includes this fix.
 
+## Composer errors and repeated overload retries
+
+If OMP retries `ChatGPT composer is unavailable` ten times, first verify that
+ChatGPT is signed in in the Codex Web GPT browser. A known case reached the
+logged-out homepage with a `mobile-composer-prompt` textarea, while the helper
+expected the authenticated composer. Retrying did not restore authentication.
+Run `python3 bin/apply-composer-check.py` on a known existing shim, then restart
+only the idle shim. Full Windows setups include the fix. The exact UI error
+becomes `chatgpt_composer_check_required`, which stops OMP's misleading outer
+overload retry loop; genuine provider overload errors retain their behavior.
+After fixing the browser session, continue the existing OMP conversation.
+
 ## Bounded diagnostic logs
 
 The full shim now records request/queue timing, upstream HTTP status, semantic

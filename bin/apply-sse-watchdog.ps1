@@ -78,6 +78,51 @@ $manifestJson = @'
 }
 '@
 $moduleText = @'
+export class RecoveryIdentityStore {
+  private owners = new Map<string, { threadId: string; logicalTurnId: string; turnId: string }>();
+
+  rotate(threadId: string, turnId: string) {
+    const owner = { threadId: crypto.randomUUID(), logicalTurnId: turnId, turnId: crypto.randomUUID() };
+    this.owners.set(threadId, owner);
+    return { threadId: owner.threadId, turnId: owner.turnId };
+  }
+
+  resolve(threadId: string, turnId: string) {
+    const owner = this.owners.get(threadId);
+    if (!owner) return undefined;
+    if (owner.logicalTurnId !== turnId) {
+      owner.logicalTurnId = turnId;
+      owner.turnId = crypto.randomUUID();
+    }
+    return { threadId: owner.threadId, turnId: owner.turnId };
+  }
+
+  rebind(body: string, headers: Headers, owner: { threadId: string; turnId: string }) {
+    const request = JSON.parse(body);
+    const client = request.client_metadata;
+    if (!client || typeof client["x-codex-turn-metadata"] !== "string") throw new Error("Recovery requires native metadata");
+    const metadata = JSON.parse(client["x-codex-turn-metadata"]);
+    const previousTurnId = metadata.turn_id;
+    if (!metadata.thread_id || !previousTurnId) throw new Error("Recovery requires native ownership");
+    metadata.thread_id = owner.threadId;
+    metadata.turn_id = owner.turnId;
+    client["x-codex-turn-metadata"] = JSON.stringify(metadata);
+    if (client.turn_id === previousTurnId) client.turn_id = owner.turnId;
+    // Rebind only the current turn's user/environment records; keep historical
+    // tool calls, results, messages, instructions and content byte-for-byte.
+    for (const item of request.input ?? []) {
+      if (item?.role === "user" && item.internal_chat_message_metadata_passthrough?.turn_id === previousTurnId) {
+        item.internal_chat_message_metadata_passthrough.turn_id = owner.turnId;
+      }
+    }
+    const { tool_namespaces_info: _tools, ...headerMetadata } = metadata;
+    headers.set("x-codex-turn-metadata", JSON.stringify(headerMetadata).replace(
+      /[\x7f-\uffff]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
+    ));
+    return JSON.stringify(request);
+  }
+}
+
 // Heartbeats prove transport liveness, not model progress.
 export function hasCompleteRecoveryInput(body: unknown): boolean {
   if (!body || typeof body !== "object" || Array.isArray(body)) return false;

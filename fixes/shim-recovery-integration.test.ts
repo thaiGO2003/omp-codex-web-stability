@@ -12,6 +12,8 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
     const dir = await mkdtemp(join(tmpdir(), "omp-silent-http-"));
     const bodies: string[] = [];
     let interrupted = 0;
+    const retiredThreads = new Set<string>();
+    let firstIdentity = { threadId: "thread_fixture", turnId: "turn_fixture" };
     let first: ReadableStreamDefaultController<Uint8Array> | undefined;
     const native = Bun.serve({ hostname: "127.0.0.1", port: 0,
       async fetch(req) {
@@ -20,13 +22,22 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
         if (url.pathname === "/admin/interrupt-turn") {
           expect(req.headers.get("authorization")).toBe("Bearer fixture-control");
           const metadata = await req.json();
-          expect(metadata).toEqual({ threadId: "thread_fixture", turnId: "turn_fixture" });
+          expect(metadata).toEqual(firstIdentity);
           interrupted++;
+          retiredThreads.add(metadata.threadId);
           try { first?.close(); } catch { /* idempotent fixture interruption */ }
           return Response.json({ status: scenario === "invalid_ack" ? "refused" : "ok", cancelled_http_turns: 1, cancelled_browser_turns: 1 });
         }
         expect(url.pathname).toBe("/v1/responses");
         bodies.push(await req.text());
+        const requestMetadata = JSON.parse(JSON.parse(bodies.at(-1)!).client_metadata["x-codex-turn-metadata"]);
+        const headerMetadata = JSON.parse(req.headers.get("x-codex-turn-metadata")!);
+        if (bodies.length === 1) firstIdentity = { threadId: requestMetadata.thread_id, turnId: requestMetadata.turn_id };
+        expect(headerMetadata.turn_id).toBe(requestMetadata.turn_id);
+        expect(headerMetadata.thread_id).toBe(requestMetadata.thread_id);
+        // Native 6.1.9 remembers cancelled identities; the old chat's MCP
+        // session may be gone as well. Reusing either cannot recover.
+        if (retiredThreads.has(requestMetadata.thread_id)) return new Response(null, { status: 499 });
         return new Response(new ReadableStream<Uint8Array>({ start(controller) {
           controller.enqueue(frame({ type: "response.created", response: { id: `resp_${bodies.length}`, status: "in_progress", output: [] } }));
           if (bodies.length === 1) first = controller;
@@ -75,21 +86,53 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
       const input: object[] = [{ role: "user", content: "Continue the isolated fixture" },
         { type: "function_call", call_id: "call_done_omp", name: "bash", arguments: "{}" }];
       if (scenario !== "missing_result") input.push({ type: "function_call_output", call_id: "call_done_omp", output: "failed: exit 7" });
-      const response = await fetch(`http://127.0.0.1:${port}/v1/codex/responses`, {
+      const requestBody = { model: "chatgpt-web/gpt-5.6-sol", __omp_cwd: dir,
+        client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread_fixture", turn_id: "turn_fixture" }) }, input };
+      const send = (value = requestBody) => fetch(`http://127.0.0.1:${port}/v1/codex/responses`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model: "chatgpt-web/gpt-5.6-sol", __omp_cwd: dir,
-          client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread_fixture", turn_id: "turn_fixture" }) }, input }),
+        body: JSON.stringify(value),
         signal: AbortSignal.timeout(4000),
       });
+      const response = await send();
       const output = await response.text();
       expect(interrupted).toBe(scenario === "unsupported_version" ? 2 : 1);
       const eligible = scenario === "complete" || scenario === "complete_619";
       expect(bodies.length).toBe(eligible ? 2 : 1);
       if (eligible) {
-        expect(bodies[1]).toBe(bodies[0]);
+        const firstBody = JSON.parse(bodies[0]), recoveredBody = JSON.parse(bodies[1]);
+        const firstMetadata = JSON.parse(firstBody.client_metadata["x-codex-turn-metadata"]);
+        const recoveredMetadata = JSON.parse(recoveredBody.client_metadata["x-codex-turn-metadata"]);
+        expect(recoveredMetadata.thread_id).not.toBe(firstMetadata.thread_id);
+        expect(recoveredMetadata.turn_id).not.toBe(firstMetadata.turn_id);
+        // Only ownership may differ. All task content and completed tool
+        // results must survive, including failures; no tool is replayed here.
+        const withoutOwner = (value: any) => {
+          const copy = structuredClone(value);
+          const metadata = JSON.parse(copy.client_metadata["x-codex-turn-metadata"]);
+          delete metadata.thread_id; delete metadata.turn_id;
+          copy.client_metadata["x-codex-turn-metadata"] = JSON.stringify(metadata);
+          for (const item of copy.input) {
+            if (item.role === "user" && item.internal_chat_message_metadata_passthrough) {
+              delete item.internal_chat_message_metadata_passthrough.turn_id;
+            }
+          }
+          return copy;
+        };
+        expect(withoutOwner(recoveredBody)).toEqual(withoutOwner(firstBody));
         expect(JSON.parse(bodies[1]).input).toContainEqual({ type: "function_call_output", call_id: "call_done", output: "failed: exit 7" });
         expect(output).toContain("HTTP_RECOVERED");
         expect(output).not.toContain("chatgpt_web_recovery_stopped");
+        const continuation = await send();
+        expect(await continuation.text()).toContain("HTTP_RECOVERED");
+        const continuedMetadata = JSON.parse(JSON.parse(bodies[2]).client_metadata["x-codex-turn-metadata"]);
+        expect(continuedMetadata).toEqual(recoveredMetadata);
+        const nextTurn = await send({ ...requestBody, client_metadata: {
+          "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread_fixture", turn_id: "turn_next" }),
+        } });
+        expect(await nextTurn.text()).toContain("HTTP_RECOVERED");
+        const nextMetadata = JSON.parse(JSON.parse(bodies[3]).client_metadata["x-codex-turn-metadata"]);
+        expect(nextMetadata.thread_id).toBe(recoveredMetadata.thread_id);
+        expect(nextMetadata.turn_id).not.toBe(recoveredMetadata.turn_id);
       } else expect(output).toContain("chatgpt_web_recovery_stopped");
     } finally {
       child?.kill();

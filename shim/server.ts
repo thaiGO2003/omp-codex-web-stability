@@ -1,6 +1,7 @@
 import { isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import { guardResponseStream, hasCompleteRecoveryInput } from "./sse-watchdog";
+import { RecoveryIdentityStore } from "./sse-watchdog";
 import { record, addCodexEnvironment } from "./compatibility";
 import { taskLabelResponse } from "./task-label";
 import { translateToolCallIds, translateResponseStream } from "./tool-call-ids";
@@ -34,6 +35,7 @@ async function interruptNativeTurn(threadId: string | undefined, turnId: string 
 }
 
 const threadTails = new Map<string, Promise<void>>();
+const recoveryIdentities = new RecoveryIdentityStore();
 
 async function acquireThread(threadId: string) {
   const previous = threadTails.get(threadId) ?? Promise.resolve();
@@ -167,8 +169,21 @@ Bun.serve({
       && (incoming.pathname === "/v1/codex/responses" || incoming.pathname === "/v1/codex/responses/compact");
     const releaseThread = shouldSerialize ? await acquireThread(threadId!) : undefined;
 
+    const logicalThreadId = threadId;
+    const logicalTurnId = turnId;
+    // Resolve after acquiring the logical queue: another round may have rotated
+    // the owner while this request waited. Never attach to that retired session.
     let upstream: Response;
     try {
+      if (logicalThreadId && logicalTurnId && typeof body === "string") {
+        const owner = recoveryIdentities.resolve(logicalThreadId, logicalTurnId)
+          ?? (hasCompleteRecoveryInput(JSON.parse(body)) ? recoveryIdentities.rotate(logicalThreadId, logicalTurnId) : undefined);
+        if (owner) {
+          body = recoveryIdentities.rebind(body, headers, owner);
+          threadId = owner.threadId;
+          turnId = owner.turnId;
+        }
+      }
       upstream = await fetch(upstreamUrl, {
         method: req.method,
         headers,
@@ -197,6 +212,12 @@ Bun.serve({
           if (!health.ok || !["6.1.7", "6.1.9"].includes((await health.json()).version)) {
             throw new Error("Silent recovery requires a verified Codex Web 6.1.7 or 6.1.9 lifecycle");
           }
+          // The old identity is permanently cancelled by the native runtime.
+          // Fresh thread ownership also prevents reuse of its terminated MCP chat.
+          const owner = recoveryIdentities.rotate(logicalThreadId!, logicalTurnId!);
+          body = recoveryIdentities.rebind(body as string, headers, owner);
+          threadId = owner.threadId;
+          turnId = owner.turnId;
           const connect = new AbortController();
           const deadline = setTimeout(() => connect.abort(), 20_000);
           let replacement: Response;

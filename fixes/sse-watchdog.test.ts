@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { guardResponseStream, hasCompleteRecoveryInput } from "./sse-watchdog";
+import { guardResponseStream, hasCompleteRecoveryInput, RecoveryIdentityStore } from "./sse-watchdog";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +18,30 @@ function fixture() {
   return { source, send: (event: object) => controller.enqueue(frame(event)), close: () => controller.close(), error: () => controller.error(Error("retired transport")), cancels: () => cancels };
 }
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+test("fresh owners isolate threads and preserve historical turn metadata", () => {
+  const store = new RecoveryIdentityStore();
+  const first = store.rotate("logical-a", "turn-a");
+  expect(store.resolve("logical-a", "turn-a")).toEqual(first);
+  expect(store.resolve("logical-b", "turn-a")).toBeUndefined();
+  const next = store.resolve("logical-a", "turn-b")!;
+  expect(next.threadId).toBe(first.threadId);
+  expect(next.turnId).not.toBe(first.turnId);
+  const rotated = store.rotate("logical-a", "turn-b");
+  expect(rotated.threadId).not.toBe(first.threadId);
+  const history = { role: "user", content: "history", internal_chat_message_metadata_passthrough: { turn_id: "turn-old" } };
+  const current = { role: "user", content: "continue", internal_chat_message_metadata_passthrough: { turn_id: "turn-b" } };
+  const request = { client_metadata: { turn_id: "turn-b", "x-codex-turn-metadata": JSON.stringify({ thread_id: "logical-a", turn_id: "turn-b", tool_namespaces_info: { example: true } }) }, input: [history, current] };
+  const headers = new Headers();
+  const result = JSON.parse(store.rebind(JSON.stringify(request), headers, rotated));
+  expect(result.input[0]).toEqual(history);
+  expect(result.input[1].content).toBe(current.content);
+  expect(result.input[1].internal_chat_message_metadata_passthrough.turn_id).toBe(rotated.turnId);
+  expect(result.client_metadata.turn_id).toBe(rotated.turnId);
+  expect(JSON.parse(headers.get("x-codex-turn-metadata")!).tool_namespaces_info).toBeUndefined();
+  expect(JSON.parse(result.client_metadata["x-codex-turn-metadata"]).tool_namespaces_info).toEqual({ example: true });
+  expect(request.input[1]).toEqual(current);
+});
 
 test("recovery input requires full context with one result for every historical call", () => {
   const call = { type: "function_call", call_id: "call_one", name: "bash", arguments: "{}" };

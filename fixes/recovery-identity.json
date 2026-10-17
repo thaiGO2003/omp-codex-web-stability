@@ -1,0 +1,26 @@
+{
+  "replacements": [
+    {
+      "old": "import { homedir } from \"node:os\";\nimport { guardResponseStream, hasCompleteRecoveryInput } from \"./sse-watchdog\";\nimport { record, addCodexEnvironment } from \"./compatibility\";\nimport { taskLabelResponse } from \"./task-label\";\n",
+      "new": "import { homedir } from \"node:os\";\nimport { guardResponseStream, hasCompleteRecoveryInput } from \"./sse-watchdog\";\nimport { RecoveryIdentityStore } from \"./sse-watchdog\";\nimport { record, addCodexEnvironment } from \"./compatibility\";\nimport { taskLabelResponse } from \"./task-label\";\n"
+    },
+    {
+      "old": "\nconst threadTails = new Map<string, Promise<void>>();\n\nasync function acquireThread(threadId: string) {\n",
+      "new": "\nconst threadTails = new Map<string, Promise<void>>();\nconst recoveryIdentities = new RecoveryIdentityStore();\n\nasync function acquireThread(threadId: string) {\n"
+    },
+    {
+      "old": "    const releaseThread = shouldSerialize ? await acquireThread(threadId!) : undefined;\n\n    let upstream: Response;\n    try {\n      upstream = await fetch(upstreamUrl, {\n        method: req.method,\n",
+      "new": "    const releaseThread = shouldSerialize ? await acquireThread(threadId!) : undefined;\n\n    const logicalThreadId = threadId;\n    const logicalTurnId = turnId;\n    // Resolve after acquiring the logical queue: another round may have rotated\n    // the owner while this request waited. Never attach to that retired session.\n    let upstream: Response;\n    try {\n      if (logicalThreadId && logicalTurnId && typeof body === \"string\") {\n        const owner = recoveryIdentities.resolve(logicalThreadId, logicalTurnId)\n          ?? (hasCompleteRecoveryInput(JSON.parse(body)) ? recoveryIdentities.rotate(logicalThreadId, logicalTurnId) : undefined);\n        if (owner) {\n          body = recoveryIdentities.rebind(body, headers, owner);\n          threadId = owner.threadId;\n          turnId = owner.turnId;\n        }\n      }\n      upstream = await fetch(upstreamUrl, {\n        method: req.method,\n"
+    },
+    {
+      "old": "            throw new Error(\"Silent recovery requires a verified Codex Web 6.1.7 or 6.1.9 lifecycle\");\n          }\n          const connect = new AbortController();\n          const deadline = setTimeout(() => connect.abort(), 20_000);\n",
+      "new": "            throw new Error(\"Silent recovery requires a verified Codex Web 6.1.7 or 6.1.9 lifecycle\");\n          }\n          // The old identity is permanently cancelled by the native runtime.\n          // Fresh thread ownership also prevents reuse of its terminated MCP chat.\n          const owner = recoveryIdentities.rotate(logicalThreadId!, logicalTurnId!);\n          body = recoveryIdentities.rebind(body as string, headers, owner);\n          threadId = owner.threadId;\n          turnId = owner.turnId;\n          const connect = new AbortController();\n          const deadline = setTimeout(() => connect.abort(), 20_000);\n"
+    }
+  ],
+  "upgrades": [
+    {
+      "old": "    const logicalThreadId = threadId;\n    const logicalTurnId = turnId;\n    // Resolve after acquiring the logical queue: another round may have rotated\n    // the owner while this request waited. Never attach to that retired session.\n    if (logicalThreadId && logicalTurnId && typeof body === \"string\") {\n      const owner = recoveryIdentities.resolve(logicalThreadId, logicalTurnId);\n      if (owner) {\n        body = recoveryIdentities.rebind(body, headers, owner);\n        threadId = owner.threadId;\n        turnId = owner.turnId;\n      }\n    }\n\n    let upstream: Response;\n    try {\n",
+      "new": "    const logicalThreadId = threadId;\n    const logicalTurnId = turnId;\n    // Resolve after acquiring the logical queue: another round may have rotated\n    // the owner while this request waited. Never attach to that retired session.\n    let upstream: Response;\n    try {\n      if (logicalThreadId && logicalTurnId && typeof body === \"string\") {\n        const owner = recoveryIdentities.resolve(logicalThreadId, logicalTurnId)\n          ?? (hasCompleteRecoveryInput(JSON.parse(body)) ? recoveryIdentities.rotate(logicalThreadId, logicalTurnId) : undefined);\n        if (owner) {\n          body = recoveryIdentities.rebind(body, headers, owner);\n          threadId = owner.threadId;\n          turnId = owner.turnId;\n        }\n      }\n"
+    }
+  ]
+}

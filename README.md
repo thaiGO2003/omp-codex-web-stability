@@ -78,6 +78,13 @@ See [the 6.1.9 investigation and limits](docs/recovery-619.md). A submitted-turn
 failure does not by itself prove that tools never ran; the shim does not blindly
 replay that terminal error.
 
+For a silent stall followed by `Silent recovery upstream HTTP 499` or later
+`McpServerError: Session terminated`, upgrade the existing idle shim with
+`python3 bin/apply-recovery-identity.py`, then restart only the shim service.
+Recovery must use fresh native ownership because 6.1.9 remembers cancelled
+thread/turn identities. See the October 17 section of the investigation for
+validation and limits. The generated full Windows Web setup includes this fix.
+
 ## Fix Failed to fetch without losing the OMP session
 
 The new [6.1.7 fetch recovery patch](docs/fetch-recovery.md) recognizes failed

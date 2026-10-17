@@ -88,6 +88,50 @@ bun tests/verify-browser-rebinding-617.ts /path/to/6.1.9-copy --version-619
 
 ## Limits
 
+### October 17: HTTP 499 and terminated connector sessions
+
+The old shim interrupted a silent native turn and then retried its original
+thread/turn identity. The 6.1.9 HTTP tracker retains cancellation tombstones;
+registering that identity again immediately aborts the request (HTTP 499).
+Later OMP continuations also reported `McpServerError: Session terminated`.
+That connector error is observed evidence, while the exact reason for the
+original lack of semantic progress remains unverified.
+
+The shim now allocates a fresh native thread and turn for an eligible silent
+replacement. It retains that new owner for subsequent OMP rounds, keeping
+their logical serialization unchanged. Metadata in the body, header and current
+user/environment records agrees; task content and completed tool results stay
+unchanged. Cancelling a replacement targets the replacement owner. Existing
+no-output, complete-history, version, acknowledgement and one-replacement
+guards remain in force. The runtime's cancellation tombstones are preserved.
+The first complete-context request after a shim restart also gets fresh native
+ownership, so a restarted shim does not reconnect a logical OMP thread to an
+already terminated native chat. Partial-context requests cannot create a new
+owner. A rebind validation error releases the logical queue through the normal
+request error path.
+
+To upgrade an existing, idle Linux shim:
+
+```bash
+python3 bin/apply-recovery-identity.py --dry-run
+python3 bin/apply-recovery-identity.py
+systemctl --user restart codex-chatgpt-web-omp-shim.service
+```
+
+The installer validates the four known source regions before writing, preserves
+custom port settings, backs up both changed files, and rolls back write failures.
+The generated Windows **full Web setup** contains the updated server as well.
+The separate watchdog-only installer does not migrate old identity routing.
+
+The HTTP fixture now retains cancelled thread identities and returns 499 for
+attempts to reuse them. It verifies recovery, an ensuing tool-continuation
+round, and a later user turn using the new owner. Tests also verify that only
+ownership metadata changes; the previous claim of a byte-identical entire
+replacement body applies to the older implementation, not this correction.
+
+This fixes a reproduced local recovery defect; it cannot guarantee that the
+remote ChatGPT service or connector will never terminate a session.
+
 The absent-assistant-DOM failure was observed, but its remote ChatGPT cause is
 unverified. This patch fixes the reproduced saved-turn ownership defects and the
 shim version mismatch. It does not reclassify every `chatgpt_submitted_turn_failed`

@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @unittest.skipUnless(POWERSHELL, 'PowerShell required')
 class BatBootstrapTests(unittest.TestCase):
     def test_real_bootstrap_updates_old_bundle_and_preserves_it_on_download_failure(self):
-        text = (ROOT / 'install.bat').read_text()
+        text = (ROOT / 'install-and-run.bat').read_text()
         command = re.search(r'^"%stability_shell%" -NoProfile -ExecutionPolicy Bypass -Command "(.*)"$', text, re.M)[1]
         with tempfile.TemporaryDirectory(prefix="BAT path ! with spaces '") as directory:
             target = Path(directory) / 'install.ps1'

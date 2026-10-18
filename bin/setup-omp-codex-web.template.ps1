@@ -9,7 +9,7 @@ param(
     [string]$AgentDirectory,
     [string]$ShimDirectory,
     [string]$UpstreamUrl = 'http://127.0.0.1:17841',
-    [ValidateRange(1, 65535)][int]$ShimPort = 17842,
+    [ValidateRange(1, 65535)][int]$ShimPort = 3007,
     [string]$JudgeBaseUrl,
     [string]$BunPath,
     [switch]$NoStart,

@@ -8,7 +8,7 @@ import { translateToolCallIds, translateResponseStream } from "./tool-call-ids";
 import { DiagnosticLog, errorFields } from "./diagnostics";
 
 const listenHost = "127.0.0.1";
-const listenPort = Number(process.env.OMP_CODEX_WEB_SHIM_PORT || 17842);
+const listenPort = Number(process.env.OMP_CODEX_WEB_SHIM_PORT || 3007);
 const upstreamOrigin = process.env.OMP_CODEX_WEB_UPSTREAM || "http://127.0.0.1:17841";
 const cwdHeader = "x-omp-cwd";
 const diagnostics = new DiagnosticLog();

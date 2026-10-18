@@ -190,13 +190,23 @@ changes used to prevent repeated replacement-agent termination.
 
 1. Install OMP and Bun, then open Codex Web and sign in to ChatGPT.
 2. Download the [repository ZIP](https://github.com/thaiGO2003/omp-codex-web-stability/archive/refs/heads/main.zip) and **extract it**.
-3. Double-click **[install.bat](install.bat)** in the extracted folder. Administrator access and Python are not required. The window stays open so you can read the result.
+3. Double-click **[install-and-run.bat](install-and-run.bat)** in the extracted folder. Python is not required. The window stays open so you can read the result.
+4. Accept the Windows administrator (UAC) prompt. Codex Web lives under `C:\Program Files\Codex Web GPT`, so the browser-helper fix and the logon task need elevation; `install-and-run.bat` re-launches itself elevated automatically. If you decline, nothing is installed.
 
-You can also download `install.bat` alone. When `install.ps1` is missing or has an
-older bundle revision, BAT downloads the matching installer from this repository,
-checks its revision and PowerShell syntax, then saves a backup before replacing
-the old file. A failed download leaves the old file intact and stops installation.
-It prefers PowerShell 7 and falls back to Windows PowerShell.
+`install-and-run.bat` installs the shim and browser fixes **and** starts the
+[Codex Web watchdog](#keep-codex-web-running-auto-update--watchdog) that keeps
+17841 alive. It also registers the watchdog as a logon scheduled task so it
+survives reboots.
+
+Helper paths that cannot be written (for example a Codex Web installed elsewhere
+without elevation) are skipped with a `needs Administrator` warning instead of
+aborting the whole installation.
+
+You can also download `install-and-run.bat` alone. When `install.ps1` is missing
+or has an older bundle revision, BAT downloads the matching installer from this
+repository, checks its revision and PowerShell syntax, then saves a backup before
+replacing the old file. A failed download leaves the old file intact and stops
+installation. It prefers PowerShell 7 and falls back to Windows PowerShell.
 
 The bundled **[install.ps1](install.ps1)** also works when downloaded alone. It
 installs the full compatibility shim with the SSE watchdog, configures OMP model
@@ -207,18 +217,18 @@ updating both CLI/helper and their integrity manifest together with the Send
 budgets. The older approval-card and model-picker patch remains specific to
 6.1.4. Unknown layouts are reported; mismatched 6.1.7 manifests stop installation.
 Changed files get timestamped backups. Other model roles and provider credentials
-are preserved; the default connection uses local ports 17842 -> 17841.
+are preserved; the default connection uses local ports 3007 -> 17841.
 
 From PowerShell, preview or customize the installation:
 
 ```powershell
-.\install.bat -DryRun
-.\install.bat -JudgeBaseUrl "http://127.0.0.1:20218"
-.\install.bat -UpstreamUrl "http://127.0.0.1:17841" -ShimPort 17843 -NoStart
+.\install-and-run.bat -DryRun
+.\install-and-run.bat -JudgeBaseUrl "http://127.0.0.1:20218"
+.\install-and-run.bat -UpstreamUrl "http://127.0.0.1:17841" -ShimPort 17843 -NoStart
 ```
 
-`-BunPath`, `-AgentDirectory`, `-ShimDirectory`, `-HelperPath` and
-`-SkipBrowserFixes` are also supported. A custom helper path receives the guarded
+`-BunPath`, `-AgentDirectory`, `-ShimDirectory`, `-HelperPath`, `-SkipBrowserFixes`
+and `-NoWatchdog` are also supported. A custom helper path receives the guarded
 timeout fix; 6.1.4 rebinding requires a `6.1.4-*/app/browser-helper.cjs`
 installation path, while 6.1.7 requires the runtime's `manifest.json` and both
 bundles. `-DryRun` leaves installation files unchanged and starts no
@@ -230,6 +240,54 @@ bundle installs the bridge and fixes rather than those applications.
 The bundle does not configure a Windows memory guard. Running out of RAM can
 still interrupt a browser turn. PowerShell 7 integration tests run on Linux;
 Windows PowerShell 5.1 and double-click execution need native Windows validation.
+
+## Keep Codex Web running (auto-update + watchdog)
+
+The watchdog lives at
+`%USERPROFILE%\.local\share\codex-chatgpt-web-omp-shim\watch-codex-web.ps1`
+(installed by `install-and-run.bat`). It polls the local Codex Web origin and:
+
+1. **Auto-updates** Codex Web from its GitHub releases (`miuuyy/codex-chatgpt-web`,
+   `releases/latest`) when a newer version exists. It downloads the
+   `codex-web-gpt-<version>-win-x64.exe` asset, verifies it against the release's
+   `checksums.txt` (SHA-256), then runs it silently (`/S`). Updates are only
+   attempted while Codex Web is idle (no active HTTP/browser turns).
+2. **Relaunches when down** so OMP never hits
+   `Unable to connect ... ConnectionRefused` at `http://127.0.0.1:17841/v1`.
+3. **Restarts a stuck daemon**: if `/healthz` stops responding or stops
+   accepting turns for `-StuckSeconds`, it closes the launcher/daemon and
+   starts a fresh one.
+
+Run it directly, register it at logon, or remove the task:
+
+```powershell
+# Run in the foreground (one polling loop)
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\watch-codex-web.ps1
+
+# Register (and immediately start) the logon scheduled task
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\watch-codex-web.ps1 -InstallTask
+
+# Remove the scheduled task
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\watch-codex-web.ps1 -UninstallTask
+
+# One-shot checks
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\watch-codex-web.ps1 -Once -DryRun
+```
+
+Useful switches: `-UpstreamUrl`, `-LauncherPath`, `-IntervalSeconds` (default 15),
+`-StuckSeconds` (default 90), `-NoAutoUpdate`, `-Once`, `-DryRun`, `-Quiet`. Logs
+are written to `%USERPROFILE%\.codex-chatgpt-web\diagnostics\omp-watchdog\watchdog.log`
+(2 MiB, one rotated archive). This installs no third-party dependencies beyond
+Windows PowerShell.
+
+Auto-update runs the upstream installer, which needs to write under
+`C:\Program Files` and therefore may show a Windows UAC prompt. If the watchdog
+runs hidden under the scheduled task, a silent update that needs elevation can
+fail; run the command above once interactively to apply it. After an update the
+newest runtime under `~\.codex-chatgpt-web\versions` is re-patched with the Send
+budget only when it has no integrity manifest entry for `browser-helper.cjs`;
+otherwise rerun `install-and-run.bat` (or `apply-send-timeout.ps1`) to re-apply
+the browser fixes to the new version.
 
 ### Linux
 
@@ -345,7 +403,7 @@ and providers. The shim is installed under
 `%USERPROFILE%\.local\share\codex-chatgpt-web-omp-shim` and starts in a separate
 PowerShell window. Keep that window open, then restart OMP.
 
-The connection is `OMP -> http://127.0.0.1:17842/v1 -> Codex Web :17841`.
+The connection is `OMP -> http://127.0.0.1:3007/v1 -> Codex Web :17841`.
 Use `-UpstreamUrl "http://127.0.0.1:YOUR_PORT"` if Codex Web uses another port,
 `-ShimPort 17843` if the shim port is occupied, or `-AgentDirectory "C:\path\agent"`
 for a custom OMP profile. `PI_CODING_AGENT_DIR` is respected.

@@ -13,7 +13,7 @@ enable these logs. On Linux:
 
 ```bash
 systemctl --user restart codex-chatgpt-web-omp-shim.service
-curl -fsS http://127.0.0.1:17842/omp-shim-health
+curl -fsS http://127.0.0.1:3007/omp-shim-health
 ```
 
 The health response must contain `diagnostics.enabled: true` and
@@ -57,7 +57,7 @@ bun bin/collect-diagnostics.ts --hours 2 --log-dir /path/to/logs --output incide
 ```
 
 With custom ports, set `OMP_CODEX_WEB_SHIM_PORT` and `OMP_CODEX_WEB_UPSTREAM` to
-the same values used by the shim. Defaults are 17842 and `http://127.0.0.1:17841`.
+the same values used by the shim. Defaults are 3007 and `http://127.0.0.1:17841`.
 Collection still produces available logs when an endpoint is down; unavailable
 logs produce a health-only report. Rotation may discard older events even when
 they fall inside the requested time window. Collect soon after an incident.

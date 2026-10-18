@@ -11,11 +11,12 @@ param(
     [string]$AgentDirectory,
     [string]$ShimDirectory,
     [string]$UpstreamUrl = 'http://127.0.0.1:17841',
-    [ValidateRange(1, 65535)][int]$ShimPort = 17842,
+    [ValidateRange(1, 65535)][int]$ShimPort = 3007,
     [string]$JudgeBaseUrl,
     [string]$BunPath,
     [string[]]$HelperPath,
     [switch]$SkipBrowserFixes,
+    [switch]$NoWatchdog,
     [switch]$NoStart,
     [switch]$DryRun
 )
@@ -70,6 +71,14 @@ function Get-InstalledHelpers {
         } catch { Write-Warning 'Could not read the launcher helper path; using discovered version folders.' }
     }
     return @($paths | Sort-Object -Unique)
+}
+
+function Test-HelperWritable([string]$Path) {
+    try {
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        $stream.Close()
+        return $true
+    } catch { return $false }
 }
 
 $workDirectory = $null
@@ -149,9 +158,11 @@ try {
         Invoke-BundledScript 'apply-browser-rebinding-617.ps1' @{ RuntimePath = $runtimeRoot; BunPath = $BunPath }
     }
     foreach ($path in $rebindingHelpers) {
+        if (-not (Test-HelperWritable $path)) { Write-Warning "Skipped (needs Administrator): $path"; continue }
         Invoke-BundledScript 'apply-browser-rebinding.ps1' @{ HelperPath = $path }
     }
     foreach ($path in $helpers) {
+        if (-not (Test-HelperWritable $path)) { Write-Warning "Skipped (needs Administrator): $path"; continue }
         Invoke-BundledScript 'apply-send-timeout.ps1' @{ HelperPath = $path; IncludeSelectorTimeout = $true }
     }
     $installSetup = $setupOptions.Clone(); $installSetup.NoStart = $true
@@ -159,10 +170,30 @@ try {
     Invoke-BundledScript 'apply-sse-watchdog.ps1' $compactionOptions
     if (-not $NoStart) { Invoke-BundledScript 'setup-omp-codex-web.ps1' $setupOptions }
 
+    $watchdogPath = Join-Path $ShimDirectory 'watch-codex-web.ps1'
+    if (-not $NoWatchdog) {
+        $watchdogEntry = $payload.scripts.PSObject.Properties['watch-codex-web.ps1']
+        if ($watchdogEntry) {
+            [void][IO.Directory]::CreateDirectory($ShimDirectory)
+            if (-not [IO.File]::Exists($watchdogPath) -or
+                [IO.File]::ReadAllText($watchdogPath, $utf8) -cne [string]$watchdogEntry.Value) {
+                [IO.File]::WriteAllText($watchdogPath, [string]$watchdogEntry.Value, $utf8)
+            }
+            Write-Host "Codex Web watchdog installed: $watchdogPath"
+            if (-not $NoStart -and [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+                & $shellPath -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $watchdogPath -UpstreamUrl $UpstreamUrl -InstallTask
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning ("Could not register the watchdog scheduled task. Run: powershell -NoProfile -ExecutionPolicy Bypass -File `"$watchdogPath`" -InstallTask")
+                }
+            }
+        } else { Write-Warning 'Watchdog payload is missing from this installer build.' }
+    }
+
     Write-Host ''
     Write-Host 'Installation complete: model roles, full shim with SSE recovery, compaction shake -> handoff, and supported browser fixes.'
     Write-Host 'Once active turns finish, close/reopen Codex Web and restart OMP. If the shim was already running, restart its window too.'
     Write-Host ('Start shim later: powershell -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $ShimDirectory 'start-shim.ps1') + '"')
+    if (-not $NoWatchdog) { Write-Host ('Codex Web watchdog: powershell -NoProfile -ExecutionPolicy Bypass -File "' + $watchdogPath + '"') }
 } catch {
     [Console]::Error.WriteLine("ERROR: $($_.Exception.Message)")
     exit 1

@@ -1,10 +1,12 @@
 import importlib.util
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_SHIM_PORT = re.search(r'OMP_CODEX_WEB_SHIM_PORT \|\| (\d+)', (ROOT / 'shim/server.ts').read_text()).group(1)
 spec = importlib.util.spec_from_file_location('diagnostics_install', ROOT / 'bin/apply-diagnostics.py')
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
@@ -22,7 +24,7 @@ class DiagnosticsInstallTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as d:
                 target = Path(d)
                 server = target / 'server.ts'
-                original = self.original().replace('17842', '18842')
+                original = self.original().replace(DEFAULT_SHIM_PORT, '18842')
                 if legacy:
                     p = next(p for p in installer.PATCHES if p.get('alternatives'))
                     original = original.replace(p['old'], '')

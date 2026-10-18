@@ -1,10 +1,12 @@
 import importlib.util
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_SHIM_PORT = re.search(r'OMP_CODEX_WEB_SHIM_PORT \|\| (\d+)', (ROOT / 'shim/server.ts').read_text()).group(1)
 spec = importlib.util.spec_from_file_location('recovery_install', ROOT / 'bin/apply-recovery-identity.py')
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
@@ -21,7 +23,7 @@ class RecoveryIdentityInstallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             target = Path(d)
             server = target / 'server.ts'
-            original = self.original().replace('17842', '18842')
+            original = self.original().replace(DEFAULT_SHIM_PORT, '18842')
             server.write_text(original)
             installer.install(target, dry_run=True)
             self.assertEqual(server.read_text(), original)

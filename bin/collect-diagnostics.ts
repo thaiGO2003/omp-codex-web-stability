@@ -94,7 +94,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       if (!Number.isFinite(hours) || hours <= 0 || hours > 168) throw new Error("--hours must be between 0 and 168");
       const output = resolve(options.get("--output") ?? `omp-diagnostics-${new Date().toISOString().replace(/[:.]/g, "-")}.json.gz`);
       const result = await collect({ directory: options.get("--log-dir") ?? defaultLogDirectory(), output, hours,
-        upstream: process.env.OMP_CODEX_WEB_UPSTREAM || "http://127.0.0.1:17841", shimPort: Number(process.env.OMP_CODEX_WEB_SHIM_PORT || 17842) });
+        upstream: process.env.OMP_CODEX_WEB_UPSTREAM || "http://127.0.0.1:17841", shimPort: Number(process.env.OMP_CODEX_WEB_SHIM_PORT || 3007) });
       console.log(`Saved ${result.records} sanitized events: ${result.output}`);
       if (!result.logsAvailable) console.log("No diagnostic log directory was available; health snapshot only.");
     } catch {

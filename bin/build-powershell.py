@@ -70,6 +70,7 @@ windows_payload = json.dumps({'scripts': {
     name: (root / 'bin' / name).read_text() for name in [
         'setup-omp-codex-web.ps1', 'apply-sse-watchdog.ps1',
         'apply-send-timeout.ps1', 'apply-browser-rebinding.ps1', 'apply-browser-rebinding-617.ps1',
+        'watch-codex-web.ps1',
     ]
 }}, ensure_ascii=True, indent=2)
 template = (root / 'bin/install-windows.template.ps1').read_text()

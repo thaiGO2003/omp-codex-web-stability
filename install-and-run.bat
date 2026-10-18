@@ -1,6 +1,10 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-title OMP + Codex Web Stability Installer
+title OMP + Codex Web Stability Install and Run
+
+fltmc >nul 2>&1
+if errorlevel 1 goto elevate
+
 set "stability_script=%~dp0install.ps1"
 where pwsh.exe >nul 2>nul
 if not errorlevel 1 goto use_pwsh
@@ -9,6 +13,19 @@ if not errorlevel 1 goto use_powershell
 echo ERROR: Windows PowerShell or PowerShell 7 is required.
 set "install_result=1"
 goto finish
+
+:elevate
+echo Administrator access is required to patch Codex Web under "C:\Program Files".
+echo Accept the Windows prompt to continue, then let this window close.
+set "stability_bat=%~f0"
+set "stability_args=%*"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { if ($env:stability_args) { Start-Process -Verb RunAs -FilePath $env:stability_bat -ArgumentList $env:stability_args } else { Start-Process -Verb RunAs -FilePath $env:stability_bat } } catch { exit 1 }"
+if errorlevel 1 (
+  echo ERROR: Administrator access was not granted. Re-run install-and-run.bat and accept the prompt.
+  set "install_result=1"
+  goto finish
+)
+exit /b 0
 
 :use_powershell
 set "stability_shell=powershell.exe"
@@ -36,11 +53,11 @@ goto finish
 
 :download_failed
 echo ERROR: Could not download a valid updated installer. The existing file was preserved.
-echo Download the full repository ZIP, extract it, and run install.bat again.
+echo Download the full repository ZIP, extract it, and run install-and-run.bat again.
 set "install_result=1"
 
 :finish
-if "%install_result%"=="0" echo Setup finished successfully.
+if "%install_result%"=="0" echo Setup finished successfully. The Codex Web watchdog is installed and running.
 if not "%install_result%"=="0" echo Setup failed. Read the error above before retrying.
 if "%~1"=="" pause
 exit /b %install_result%

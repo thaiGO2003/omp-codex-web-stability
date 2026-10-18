@@ -37,7 +37,7 @@ the runtime and rolls back files if a write fails. Reapplication is idempotent.
 Unknown versions/platforms, corrupt manifests and partial layouts are refused.
 The old 6.1.4 installer does not install this Python port.
 
-The updated Windows `install.bat`/`install.ps1` now include a separate PowerShell
+The updated Windows `install-and-run.bat`/`install.ps1` now include a separate PowerShell
 port for 6.1.7. Its compiled patch layouts were verified against the checksum-checked
 upstream `codex-chatgpt-web-windows-amd64.zip` release. It uses Bun, validates both
 bundle hashes before writes, updates both ordinary Send budgets to 120 seconds,

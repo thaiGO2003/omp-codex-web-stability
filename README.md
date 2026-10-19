@@ -10,6 +10,37 @@ A small recovery toolkit for Oh My Pi (OMP) sessions using the ChatGPT Web / Cod
 - repeated compaction loops
 - a soft compaction that makes the context *larger* instead of smaller
 
+## Why `chatgpt_submitted_turn_failed` is generic
+
+Codex Web labels many failures **after a prompt was submitted** with the same
+`chatgpt_submitted_turn_failed` code. Its public SSE error does not expose the
+underlying browser exception, so that code alone cannot prove whether the
+problem was a stalled tab, a lost connection, or something else.
+
+The shim now reports the reason **its automatic retry stopped** instead of
+reusing that catch-all code:
+
+| Error code | What was verified |
+| --- | --- |
+| `chatgpt_web_interrupt_timeout` | Scoped native cancellation timed out; cancellation is unconfirmed. |
+| `chatgpt_web_interrupt_unreachable` | Scoped cancellation failed at the transport layer. |
+| `chatgpt_web_interrupt_invalid_ack` | Native returned no valid cancellation acknowledgement. |
+| `chatgpt_web_native_unverified` | Installed native version has not been verified for safe automatic replay (including 6.1.12). |
+| `chatgpt_submitted_retry_context_incomplete` | Full historical tool results were unavailable. |
+| `chatgpt_submitted_retry_http_rejected` | Replacement request was rejected (includes HTTP status). |
+| `chatgpt_web_semantic_progress_stalled` | Text/reasoning/tool output was already emitted, making replay unsafe. |
+| `chatgpt_web_recovery_exhausted` | One safe silent replacement also made no progress. |
+
+Native cancellation is retried **at most twice**, always targeting the same
+thread/turn, when the connection fails or returns a temporary HTTP error.
+The shim only sends a replacement prompt after a valid native cancellation
+acknowledgement and verification of the native version's retirement semantics.
+When cancellation cannot be confirmed, the old turn might still be running.
+Inspect `%USERPROFILE%\.codex-chatgpt-web\diagnostics\omp-shim\shim.jsonl`
+for the `cleanup_failed`, `cleanup_retrying`, `submitted_retry_blocked`,
+and `recovery_stopped` events. The diagnostics intentionally omit prompts,
+credentials, and raw browser exceptions.
+
 The failure that motivated this repo was a soft compaction that expanded a session from about 84K tokens to 172K tokens on a 90K context window. ChatGPT Web UI latency made the symptom worse, but oversized session context was the main cause.
 
 ## What this changes

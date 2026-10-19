@@ -87,6 +87,8 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
   let responseId = "";
   let sequence = 0;
   let cleanup: Promise<boolean> | undefined;
+  let cleanupError: unknown;
+  let recoveryError: unknown;
   let recovering: Promise<void> | undefined;
   let observe: (chunk: Uint8Array) => void = () => {};
   const startedAt = Date.now();
@@ -107,6 +109,7 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
   emit("stream_started", { timeoutMs, recoveryEligible: Boolean(options.onRecover) });
   const clear = () => { clearTimeout(timer); timer = undefined; };
   const retire = (callback: () => Promise<void>) => cleanup ??= Promise.resolve().then(callback).then(() => true, error => {
+    cleanupError = error;
     console.warn("OMP Web turn cleanup failed");
     emit("cleanup_failed", errorInfo(error));
     return false;
@@ -129,6 +132,7 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
             if (retired && !terminal && !sawOutput && recoveries === 0 && options.onRecover) {
               recoveries++;
               cleanup = undefined;
+              cleanupError = undefined;
               emit("recovery_started");
               try {
                 const next = await options.onRecover(recoveryAbort.signal);
@@ -144,6 +148,7 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
                 return;
               } catch (error) {
                 if (closed) return;
+                recoveryError = error;
                 console.warn("OMP Web silent recovery failed");
                 emit("recovery_failed", errorInfo(error));
                 await retire(options.onCancel);
@@ -151,11 +156,34 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
             }
             if (closed) return;
             closed = true;
-            emit("recovery_stopped", { errorCode: "chatgpt_web_recovery_stopped" });
+            const reasonCode = (error: unknown) => {
+              const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+              return typeof code === "string" && [
+                "chatgpt_web_interrupt_timeout", "chatgpt_web_interrupt_unreachable",
+                "chatgpt_web_interrupt_http_rejected", "chatgpt_web_interrupt_invalid_ack",
+                "chatgpt_web_interrupt_auth_unavailable", "chatgpt_web_native_unverified",
+              ].includes(code) ? code : undefined;
+            };
+            const code = !retired || cleanupError ? reasonCode(cleanupError) ?? "chatgpt_web_cleanup_unconfirmed"
+              : recoveryError ? reasonCode(recoveryError) ?? "chatgpt_web_recovery_connect_failed"
+              : sawOutput ? "chatgpt_web_semantic_progress_stalled"
+              : recoveries > 0 ? "chatgpt_web_recovery_exhausted"
+              : "chatgpt_web_recovery_context_incomplete";
+            const message = !retired || cleanupError
+              ? "ChatGPT Web made no semantic progress. Native turn cancellation was not confirmed; a task may still be running. Automatic replay paused to avoid duplicate tool calls. Check the ChatGPT tab and OMP shim diagnostics."
+              : recoveryError
+                ? code === "chatgpt_web_native_unverified"
+                  ? "ChatGPT Web stalled and the old turn was cancelled, but this Codex Web version has not been verified for safe automatic recovery. Check for a supported shim update before continuing."
+                  : "ChatGPT Web stalled; the old turn was cancelled, but replacement could not start. Check the ChatGPT tab and OMP shim diagnostics before continuing."
+                : sawOutput
+                  ? "ChatGPT Web stopped making semantic progress after sending output. The native turn was cancelled; automatic replay was disabled to avoid repeating tool calls. Continue from the existing OMP session."
+                  : recoveries > 0
+                    ? "ChatGPT Web made no semantic progress after one automatic recovery. The replacement turn was cancelled. Continue from the existing OMP session."
+                    : "ChatGPT Web stalled and the native turn was cancelled, but complete tool history was unavailable for safe replay. Continue from the existing OMP session.";
+            emit("recovery_stopped", { errorCode: code });
             const failure = { type: "response.failed", sequence_number: sequence++, retryable: false, response: {
               id: responseId || "resp_omp_stalled", status: "failed", output: [],
-              error: { type: "invalid_request_error", code: "chatgpt_web_recovery_stopped", retryable: false, status: 409,
-                message: "ChatGPT Web made no semantic progress; bounded recovery stopped. The native turn was interrupted. Send a new continue message to resume." },
+              error: { type: "invalid_request_error", code, retryable: false, status: 409, message },
             } };
             try {
               controller.enqueue(encoder.encode(`event: response.failed\ndata: ${JSON.stringify(failure)}\n\ndata: [DONE]\n\n`));

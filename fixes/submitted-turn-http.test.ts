@@ -18,6 +18,7 @@ test("real shim HTTP route retries structured submission failures with fresh own
     ["transient_http", "6.1.10"],
     ["transient_health", "6.1.10"],
     ["permanent_http", "6.1.10"],
+    ["slow_interrupt", "6.1.10"],
   ] as const) {
     const dir = await mkdtemp(join(tmpdir(), "omp-submitted-http-"));
     const inputs: any[] = [];
@@ -38,6 +39,7 @@ test("real shim HTTP route retries structured submission failures with fresh own
           const owner = await req.json();
           expect(owner).toEqual(currentOwner);
           interrupted.push(owner);
+          if (scenario === "slow_interrupt" && interrupted.length === 1) await Bun.sleep(170);
           return Response.json({ status: scenario === "invalid_ack" ? "refused" : "ok",
             cancelled_http_turns: 1, cancelled_browser_turns: 1 });
         }
@@ -77,6 +79,7 @@ test("real shim HTTP route retries structured submission failures with fresh own
       serverSource = serverSource.replace(/from "\.\/([^"]+)"/g, (_match, name) =>
         `from ${JSON.stringify(pathToFileURL(resolve("shim", name + ".ts")).href)}`);
       serverSource = serverSource.replace("Bun.serve({", "const fixtureServer = Bun.serve({");
+      if (scenario === "slow_interrupt") serverSource = serverSource.replace("AbortSignal.timeout(12_000)", "AbortSignal.timeout(100)");
       serverSource += '\nconsole.log("FIXTURE_PORT=" + fixtureServer.port);\n';
       await writeFile(join(dir, "server.ts"), serverSource);
       child = Bun.spawn([process.execPath, join(dir, "server.ts")], {
@@ -111,9 +114,9 @@ test("real shim HTTP route retries structured submission failures with fresh own
       });
       expect(response.status).toBe(200);
       const result = await response.text();
-      if (scenario === "repeated" || scenario === "transient_http" || scenario === "transient_health") {
+      if (["repeated", "transient_http", "transient_health", "slow_interrupt"].includes(scenario)) {
         expect(inputs).toHaveLength(scenario === "transient_http" ? 4 : scenario === "repeated" ? 3 : 2);
-        expect(interrupted).toHaveLength(scenario === "transient_http" ? 3 : scenario === "repeated" ? 2 : 1);
+        expect(interrupted).toHaveLength(scenario === "transient_http" ? 3 : scenario === "repeated" || scenario === "slow_interrupt" ? 2 : 1);
         expect(result).toContain("FINISHED_AFTER_RETRY");
         expect(result).toContain("response.completed");
         expect(result).not.toContain("chatgpt_submitted_turn_failed");
@@ -130,7 +133,11 @@ test("real shim HTTP route retries structured submission failures with fresh own
       } else {
         expect(inputs).toHaveLength(scenario === "permanent_http" ? 2 : 1);
         expect(interrupted).toHaveLength(scenario === "invalid_ack" || scenario === "permanent_http" ? 1 : 0);
-        expect(result).toContain("chatgpt_submitted_turn_failed");
+        expect(result).toContain(scenario === "invalid_ack" ? "chatgpt_web_interrupt_invalid_ack"
+          : scenario === "missing_result" ? "chatgpt_submitted_retry_context_incomplete"
+          : scenario === "unsupported_version" ? "chatgpt_web_native_unverified" : "chatgpt_submitted_retry_http_rejected");
+        if (scenario === "permanent_http") expect(result).toContain("HTTP 403");
+        expect(result).not.toContain("chatgpt_submitted_turn_failed");
       }
     } finally {
       child?.kill();

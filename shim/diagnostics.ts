@@ -6,9 +6,9 @@ import { join } from "node:path";
 export const diagnosticEvents = new Set([
   "shim_started", "request_received", "request_rewrite_failed", "local_response", "queue_wait", "queue_acquired",
   "upstream_headers", "upstream_error", "stream_started", "stream_progress", "stream_terminal", "stream_eof",
-  "stream_error", "stream_cancelled", "semantic_timeout", "cleanup_started", "cleanup_completed", "cleanup_failed",
+  "stream_error", "stream_cancelled", "semantic_timeout", "cleanup_started", "cleanup_completed", "cleanup_failed", "cleanup_retrying",
   "recovery_started", "recovery_lifecycle", "recovery_connecting", "recovery_connected", "recovery_failed", "recovery_stopped", "request_finished",
-  "submitted_retry_started", "submitted_retry_deferred", "submitted_retry_resumed", "submitted_retry_failed",
+  "submitted_retry_started", "submitted_retry_deferred", "submitted_retry_resumed", "submitted_retry_failed", "submitted_retry_blocked",
 ]);
 const eventTypes = new Set([
   "response.created", "response.completed", "response.incomplete", "response.done", "response.failed", "error",
@@ -19,6 +19,12 @@ const eventTypes = new Set([
 const errorCodes = new Set([
   "chatgpt_fetch_failed", "chatgpt_submission_ambiguous", "chatgpt_submitted_turn_failed", "model_version_unavailable",
   "connector_not_found", "chatgpt_web_semantic_timeout", "chatgpt_web_recovery_stopped", "network_error",
+  "chatgpt_web_interrupt_timeout", "chatgpt_web_interrupt_unreachable", "chatgpt_web_interrupt_http_rejected",
+  "chatgpt_web_interrupt_invalid_ack", "chatgpt_web_interrupt_auth_unavailable", "chatgpt_web_cleanup_unconfirmed",
+  "chatgpt_web_native_unverified", "chatgpt_web_recovery_connect_failed", "chatgpt_web_semantic_progress_stalled",
+  "chatgpt_web_recovery_exhausted", "chatgpt_web_recovery_context_incomplete",
+  "chatgpt_submitted_retry_context_incomplete", "chatgpt_submitted_retry_blocked",
+  "chatgpt_submitted_retry_health_rejected", "chatgpt_submitted_retry_http_rejected", "chatgpt_submitted_retry_invalid_stream",
   "server_is_overloaded", "chatgpt_composer_check_required",
   "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE", "ENOTFOUND", "UND_ERR_SOCKET",
 ]);
@@ -33,8 +39,8 @@ const identityFields = new Set(["logicalThreadId", "logicalTurnId", "nativeThrea
 const consoleEvents = new Set([
   "shim_started", "request_received", "upstream_headers", "upstream_error", "stream_started",
   "stream_progress", "stream_terminal", "stream_error", "semantic_timeout", "request_finished",
-  "cleanup_failed", "recovery_started", "recovery_connected", "recovery_failed", "recovery_stopped",
-  "submitted_retry_started", "submitted_retry_deferred", "submitted_retry_resumed", "submitted_retry_failed",
+  "cleanup_failed", "cleanup_retrying", "recovery_started", "recovery_connected", "recovery_failed", "recovery_stopped",
+  "submitted_retry_started", "submitted_retry_deferred", "submitted_retry_resumed", "submitted_retry_failed", "submitted_retry_blocked",
 ]);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -51,9 +57,10 @@ export function diagnosticFields(fields: Record<string, unknown>, alreadyHashed 
     } else if (key === "requestId" && typeof value === "string" && uuid.test(value)) safe[key] = value;
     else if (key === "eventType") safe[key] = eventTypes.has(String(value)) ? value : "unknown";
     else if (key === "errorCode") safe[key] = errorCodes.has(String(value)) ? value : "unknown";
-    else if (key === "errorName") safe[key] = ["Error", "TypeError", "AbortError", "TimeoutError", "SyntaxError", "TemporarySubmissionTransportError"].includes(String(value)) ? value : "Error";
+    else if (key === "errorName") safe[key] = ["Error", "TypeError", "AbortError", "TimeoutError", "SyntaxError", "TemporarySubmissionTransportError", "NativeInterruptionError"].includes(String(value)) ? value : "Error";
     else if (key === "outcome") safe[key] = ["eof", "error", "cancelled", "no_body", "local", "http_error"].includes(String(value)) ? value : "unknown";
     else if (key === "phase") safe[key] = ["stall", "cancel", "retire", "health", "connect", "submitted_failure"].includes(String(value)) ? value : "unknown";
+    else if (key === "reason") safe[key] = ["timeout", "transport", "http_transient"].includes(String(value)) ? value : "unknown";
   }
   return safe;
 }

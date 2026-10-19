@@ -135,7 +135,8 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
         const nextMetadata = JSON.parse(JSON.parse(bodies[3]).client_metadata["x-codex-turn-metadata"]);
         expect(nextMetadata.thread_id).toBe(recoveredMetadata.thread_id);
         expect(nextMetadata.turn_id).not.toBe(recoveredMetadata.turn_id);
-      } else expect(output).toContain("chatgpt_web_recovery_stopped");
+      } else expect(output).toContain(scenario === "missing_result" ? "chatgpt_web_recovery_context_incomplete"
+        : scenario === "unsupported_version" ? "chatgpt_web_native_unverified" : "chatgpt_web_interrupt_invalid_ack");
       const health = await (await fetch(`http://127.0.0.1:${port}/omp-shim-health`)).json();
       expect(health.diagnostics.enabled).toBe(true);
       expect(health.diagnostics.failedWrites).toBe(0);

@@ -103,7 +103,7 @@ test("does not retry after semantic content, tool calls, refusals, or different 
   }
 });
 
-test("a rejected recovery or missing recovery handler exposes original structured failure", async () => {
+test("rejected recovery and missing history expose distinct actionable errors", async () => {
   const input = failedSource();
   let attempted = 0;
   const output = await new Response(retrySubmittedTurnStream(input.input, {
@@ -111,10 +111,21 @@ test("a rejected recovery or missing recovery handler exposes original structure
     onRetry: async () => { attempted++; throw Error("native refusal"); },
   })).text();
   expect(attempted).toBe(1);
-  expect(output).toContain("chatgpt_submitted_turn_failed");
+  expect(output).toContain("chatgpt_submitted_retry_blocked");
+  expect(output).not.toContain("chatgpt_submitted_turn_failed");
   expect(input.cancels()).toBe(1);
   expect(await new Response(retrySubmittedTurnStream(failedSource().input, {})).text())
-    .toContain("chatgpt_submitted_turn_failed");
+    .toContain("chatgpt_submitted_retry_context_incomplete");
+});
+
+test("failed scoped cancellation keeps the original OMP session and names the actual blocker", async () => {
+  const err = Object.assign(new Error("private upstream detail"), { code: "chatgpt_web_interrupt_timeout" });
+  const output = await new Response(retrySubmittedTurnStream(failedSource().input, {
+    delay: async () => {}, onRetry: async () => { throw err; },
+  })).text();
+  expect(output).toContain('"code":"chatgpt_web_interrupt_timeout"');
+  expect(output).toContain("cancellation could not be confirmed");
+  expect(output).not.toContain("private upstream detail");
 });
 
 test("downstream cancellation aborts pending retries", async () => {

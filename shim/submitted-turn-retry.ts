@@ -66,6 +66,31 @@ export function retrySubmittedTurnStream(source: ReadableStream<Uint8Array>, opt
   const clearBuffer = () => { buffered = []; bufferedBytes = 0; pending = ""; decoder = new TextDecoder(); };
   const detach = () => options.signal?.removeEventListener("abort", abort);
 
+  const describeBlockedRetry = (reason: string, message: string) => {
+    // Only change the held, unexposed terminal failure. Never rewrite tool
+    // data, model output or any event already forwarded to OMP.
+    const bufferDecoder = new TextDecoder();
+    let original = buffered.map(part => bufferDecoder.decode(part, { stream: true })).join("");
+    original += bufferDecoder.decode();
+    let rewritten = false;
+    const output = original.replace(/^data:\s*(\{[^\r\n]*\})\r?$/gm, (line, json) => {
+      try {
+        const value = JSON.parse(json);
+        const error = value?.type === "response.failed" ? value.response?.error
+          : value?.type === "error" ? value.error ?? value : undefined;
+        if (error?.code !== "chatgpt_submitted_turn_failed") return line;
+        error.code = reason;
+        error.message = message;
+        error.retryable = false;
+        error.status = 409;
+        if (value.type === "error") { value.code = reason; value.message = message; value.retryable = false; }
+        rewritten = true;
+        return `data: ${JSON.stringify(value)}`;
+      } catch { return line; }
+    });
+    if (rewritten) { buffered = [new TextEncoder().encode(output)]; bufferedBytes = buffered[0].byteLength; }
+  };
+
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       const flush = () => {
@@ -103,6 +128,8 @@ export function retrySubmittedTurnStream(source: ReadableStream<Uint8Array>, opt
           }
           if (!retry) continue;
           if (!options.onRetry) {
+            describeBlockedRetry("chatgpt_submitted_retry_context_incomplete",
+              "ChatGPT stopped responding after submission. Automatic replay is unavailable because complete conversation/tool history was not verified. Continue in the existing OMP session.");
             flush();
             detach();
             await reader.cancel("Submitted turn cannot be safely retried").catch(() => {});
@@ -135,6 +162,29 @@ export function retrySubmittedTurnStream(source: ReadableStream<Uint8Array>, opt
                 continue;
               }
               log("submitted_retry_failed", { attempt, errorName: error instanceof Error ? error.name : "unknown" });
+              const reportedCode = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+              const code = typeof reportedCode === "string" && [
+                "chatgpt_web_native_unverified", "chatgpt_web_interrupt_timeout",
+                "chatgpt_web_interrupt_unreachable", "chatgpt_web_interrupt_http_rejected",
+                "chatgpt_web_interrupt_invalid_ack", "chatgpt_web_interrupt_auth_unavailable",
+                "chatgpt_submitted_retry_health_rejected", "chatgpt_submitted_retry_http_rejected",
+                "chatgpt_submitted_retry_invalid_stream",
+              ].includes(reportedCode) ? reportedCode : "chatgpt_submitted_retry_blocked";
+              const httpStatus = error && typeof error === "object"
+                ? (error as { httpStatus?: unknown }).httpStatus : undefined;
+              const safeStatus = typeof httpStatus === "number" && Number.isInteger(httpStatus)
+                && httpStatus >= 100 && httpStatus <= 599 ? httpStatus : undefined;
+              log("submitted_retry_blocked", { attempt, errorCode: code, httpStatus: safeStatus });
+              const message = code === "chatgpt_web_native_unverified"
+                ? "ChatGPT stopped responding after submission. Automatic retry was paused because this Codex Web version has not been verified for safe native turn retirement. Check for a compatible shim update."
+                : code.startsWith("chatgpt_web_interrupt_")
+                  ? "ChatGPT stopped responding after submission. Native cancellation could not be confirmed, so retry was paused to avoid duplicate tool calls. The original task may still be running. Check ChatGPT and OMP diagnostics."
+                  : code === "chatgpt_submitted_retry_http_rejected" || code === "chatgpt_submitted_retry_health_rejected"
+                    ? `ChatGPT stopped responding after submission. Codex Web rejected ${code.endsWith("health_rejected") ? "the health check" : "the replacement request"}${safeStatus ? ` (HTTP ${safeStatus})` : ""}. Automatic retry stopped; check local Codex Web status and keep the existing OMP session.`
+                    : code === "chatgpt_submitted_retry_invalid_stream"
+                      ? "ChatGPT stopped responding after submission. The replacement did not return a valid event stream. Check the Codex Web service and OMP diagnostics."
+                      : "ChatGPT stopped responding after submission. The automatic retry could not complete. Check OMP shim diagnostics and continue the existing session.";
+              describeBlockedRetry(code, message);
               // Preserve the structured failure if safe recovery was refused.
               flush();
               detach();

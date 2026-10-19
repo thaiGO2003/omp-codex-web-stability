@@ -92,7 +92,7 @@ test("only one silent replacement; forwarded text, reasoning or tools prevent re
       onRecover: async () => { replacements++; return fixture().source; },
     })).text();
     if (event) f.send(event);
-    expect(await output).toContain("chatgpt_web_recovery_stopped");
+    expect(await output).toContain(event ? "chatgpt_web_semantic_progress_stalled" : "chatgpt_web_recovery_exhausted");
     expect(replacements).toBe(event ? 0 : 1);
     expect(retired).toBe(event ? 1 : 2);
   }
@@ -110,7 +110,7 @@ test("failed retirement and structured platform errors never open a replacement"
       f.send({ type: "error", code: "chatgpt_platform_tool_blocked", retryable: false });
       f.close();
     }
-    expect(await output).toContain(platform ? "chatgpt_platform_tool_blocked" : "chatgpt_web_recovery_stopped");
+    expect(await output).toContain(platform ? "chatgpt_platform_tool_blocked" : "chatgpt_web_cleanup_unconfirmed");
     expect(replacements).toBe(0);
   }
 });
@@ -169,7 +169,7 @@ test("heartbeats do not postpone retirement; failure is emitted after scoped cle
   clearInterval(heartbeat);
   expect(retired).toBe(1);
   expect(f.cancels()).toBe(1);
-  expect(output).toContain('"code":"chatgpt_web_recovery_stopped"');
+  expect(output).toContain('"code":"chatgpt_web_recovery_context_incomplete"');
   expect(output).toContain("data: [DONE]");
 });
 

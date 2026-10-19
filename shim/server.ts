@@ -20,25 +20,50 @@ const diagnostics = new DiagnosticLog();
 const verifiedRetirementVersions = new Set(["6.1.7", "6.1.9", "6.1.10", "6.1.11"]);
 
 
-async function interruptNativeTurn(threadId: string | undefined, turnId: string | undefined) {
+class NativeInterruptionError extends Error {
+  constructor(readonly code: string, message: string, readonly httpStatus?: number) { super(message); this.name = "NativeInterruptionError"; }
+}
+
+async function interruptNativeTurn(threadId: string | undefined, turnId: string | undefined,
+  onRetry?: (attempt: number, reason: string) => void) {
   if (!threadId || !turnId) return;
   const configPath = join(process.env.CODEX_CHATGPT_WEB_HOME || join(homedir(), ".codex-chatgpt-web"), "config.json");
-  const config = await Bun.file(configPath).json();
-  if (typeof config.controlToken !== "string") throw new Error("Missing local Web control token");
-  const result = await fetch(new URL("/admin/interrupt-turn", upstreamOrigin), {
-    method: "POST",
-    headers: { authorization: `Bearer ${config.controlToken}`, "content-type": "application/json" },
-    body: JSON.stringify({ threadId, turnId }),
-    signal: AbortSignal.timeout(5000),
-  });
-  if (!result.ok) throw new Error(`Native turn interruption HTTP ${result.status}`);
-  const acknowledgement = await result.json();
-  if (acknowledgement.status !== "ok"
-    || !Number.isInteger(acknowledgement.cancelled_http_turns) || acknowledgement.cancelled_http_turns < 0
-    || !Number.isInteger(acknowledgement.cancelled_browser_turns) || acknowledgement.cancelled_browser_turns < 0) {
-    throw new Error("Native turn interruption returned an invalid acknowledgement");
+  const config = await Bun.file(configPath).json().catch(() => undefined);
+  if (typeof config?.controlToken !== "string") {
+    throw new NativeInterruptionError("chatgpt_web_interrupt_auth_unavailable", "Local Codex Web control token is unavailable");
   }
-  return acknowledgement;
+  // A repeated scoped interrupt targets the SAME old turn; it never sends a
+  // second model request. Retry only transport ambiguity, not refusal or a
+  // malformed acknowledgement. Keep the current OMP session intact.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    let result: Response;
+    try {
+      result = await fetch(new URL("/admin/interrupt-turn", upstreamOrigin), {
+        method: "POST",
+        headers: { authorization: `Bearer ${config.controlToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ threadId, turnId }),
+        signal: AbortSignal.timeout(12_000),
+      });
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === "TimeoutError";
+      if (attempt < 2) { onRetry?.(attempt, timedOut ? "timeout" : "transport"); continue; }
+      throw new NativeInterruptionError(timedOut ? "chatgpt_web_interrupt_timeout" : "chatgpt_web_interrupt_unreachable",
+        timedOut ? "Native interruption timed out without acknowledgement" : "Native interruption connection failed without acknowledgement");
+    }
+    if (!result.ok) {
+      const temporary = result.status === 429 || result.status >= 500;
+      await result.body?.cancel().catch(() => {});
+      if (temporary && attempt < 2) { onRetry?.(attempt, "http_transient"); continue; }
+      throw new NativeInterruptionError("chatgpt_web_interrupt_http_rejected", `Native interruption returned HTTP ${result.status}`);
+    }
+    const acknowledgement = await result.json().catch(() => undefined);
+    if (acknowledgement?.status !== "ok"
+      || !Number.isInteger(acknowledgement.cancelled_http_turns) || acknowledgement.cancelled_http_turns < 0
+      || !Number.isInteger(acknowledgement.cancelled_browser_turns) || acknowledgement.cancelled_browser_turns < 0) {
+      throw new NativeInterruptionError("chatgpt_web_interrupt_invalid_ack", "Native interruption returned no valid cancellation acknowledgement");
+    }
+    return acknowledgement;
+  }
 }
 
 const threadTails = new Map<string, Promise<void>>();
@@ -137,7 +162,8 @@ Bun.serve({
     const interrupt = async (phase: string) => {
       log("cleanup_started", { phase });
       try {
-        const ack = await interruptNativeTurn(threadId, turnId);
+        const ack = await interruptNativeTurn(threadId, turnId,
+          (attempt, reason) => log("cleanup_retrying", { phase, attempt, reason }));
         log("cleanup_completed", { phase, cancelledHttpTurns: ack?.cancelled_http_turns, cancelledBrowserTurns: ack?.cancelled_browser_turns });
       } catch (error) { log("cleanup_failed", { phase, ...errorFields(error) }); throw error; }
     };
@@ -249,7 +275,7 @@ Bun.serve({
           const lifecycleVerified = health.ok && verifiedRetirementVersions.has((await health.json()).version);
           log("recovery_lifecycle", { lifecycleVerified });
           if (!lifecycleVerified) {
-            throw new Error("Silent recovery requires a verified Codex Web retirement lifecycle");
+            throw new NativeInterruptionError("chatgpt_web_native_unverified", "Silent recovery requires a verified Codex Web retirement lifecycle");
           }
           // The old identity is permanently cancelled by the native runtime.
           // Fresh thread ownership also prevents reuse of its terminated MCP chat.
@@ -271,7 +297,7 @@ Bun.serve({
           log("upstream_headers", { httpStatus: replacement.status, sse: Boolean(replacement.headers.get("content-type")?.includes("text/event-stream")), attempt: 1 });
           if (!replacement.ok || !replacement.body || !replacement.headers.get("content-type")?.includes("text/event-stream")) {
             await replacement.body?.cancel();
-            throw new Error(`Silent recovery upstream HTTP ${replacement.status}; expected SSE`);
+            throw new NativeInterruptionError("chatgpt_web_recovery_connect_failed", "Silent recovery could not obtain a valid SSE response", replacement.status);
           }
           return replacement.body;
         } : undefined,
@@ -297,8 +323,11 @@ Bun.serve({
             await health.body?.cancel().catch(() => {});
             throw new TemporarySubmissionTransportError(health.status);
           }
-          if (!health.ok || !verifiedRetirementVersions.has((await health.json()).version)) {
-            throw new Error("Submitted-turn recovery requires a verified native retirement lifecycle");
+          if (!health.ok) {
+            throw new NativeInterruptionError("chatgpt_submitted_retry_health_rejected", "Codex Web health check rejected automatic retry", health.status);
+          }
+          if (!verifiedRetirementVersions.has((await health.json()).version)) {
+            throw new NativeInterruptionError("chatgpt_web_native_unverified", "Submitted-turn recovery requires a verified native retirement lifecycle");
           }
           await interrupt("submitted_failure");
           const owner = recoveryIdentities.rotate(logicalThreadId!, logicalTurnId!);
@@ -325,7 +354,9 @@ Bun.serve({
           }
           if (replacement.status !== 200 || !replacement.body || !isStream) {
             await replacement.body?.cancel();
-            throw new Error(`Submitted-turn replacement HTTP ${replacement.status}; expected 200 SSE`);
+            throw new NativeInterruptionError(replacement.status !== 200
+              ? "chatgpt_submitted_retry_http_rejected" : "chatgpt_submitted_retry_invalid_stream",
+            "Submitted-turn replacement did not return 200 SSE", replacement.status);
           }
           return guardResponseStream(replacement.body, {
             onDiagnostic: log,

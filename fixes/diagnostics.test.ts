@@ -45,7 +45,7 @@ test("bounded logging and export discard content, credentials and unrecognized f
 test("rotation bounds disk usage, restricts permissions and logging failures are nonfatal", () => {
   const dir = mkdtempSync(join(tmpdir(), "omp-log-rotation-"));
   try {
-    const logger = new DiagnosticLog(dir, 1024, 3);
+    const logger = new DiagnosticLog(dir, 1024, 3, false);
     for (let i = 0; i < 100; i++) logger.log("request_received", { requestId: crypto.randomUUID(), logicalThreadId: "fixture" });
     const files = readdirSync(dir);
     expect(files).toHaveLength(3);
@@ -57,7 +57,7 @@ test("rotation bounds disk usage, restricts permissions and logging failures are
     }
     if (process.platform !== "win32") expect(statSync(dir).mode & 0o777).toBe(0o700);
     const oneDir = join(dir, "single");
-    const one = new DiagnosticLog(oneDir, 512, 1);
+    const one = new DiagnosticLog(oneDir, 512, 1, false);
     for (let i = 0; i < 30; i++) one.log("shim_started");
     expect(readdirSync(oneDir)).toEqual(["shim.jsonl"]);
     const file = join(dir, "not-a-directory");
@@ -67,6 +67,30 @@ test("rotation bounds disk usage, restricts permissions and logging failures are
     expect(broken.status().failedWrites).toBe(1);
     expect(diagnosticFields({ elapsedMs: Infinity, bytes: -1, prompt: "secret" })).toEqual({});
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("console reports safe lifecycle and retry events without exposing request content", () => {
+  const dir = mkdtempSync(join(tmpdir(), "omp-console-test-"));
+  const observed: string[] = [];
+  const originalInfo = console.info;
+  try {
+    console.info = (...args: unknown[]) => { observed.push(JSON.stringify(args)); };
+    const logger = new DiagnosticLog(dir, 2048, 2, true);
+    const secret = "SECRET_PROMPT_TOKEN_TOOL_RESULT";
+    logger.log("request_received", { requestId: crypto.randomUUID(), prompt: secret, logicalThreadId: secret });
+    logger.log("submitted_retry_started", { attempt: 1, errorCode: "chatgpt_submitted_turn_failed", message: secret });
+    logger.log("stream_terminal", { eventType: "response.completed", output: secret });
+    expect(observed.join("\n")).toContain("submitted_retry_started");
+    expect(observed.join("\n")).toContain("response.completed");
+    expect(observed.join("\n")).not.toContain(secret);
+    expect(logger.status().consoleEnabled).toBe(true);
+    const quiet = new DiagnosticLog(join(dir, "quiet"), 2048, 2, false);
+    quiet.log("submitted_retry_started", { attempt: 1 });
+    expect(observed).toHaveLength(3);
+  } finally {
+    console.info = originalInfo;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("watchdog records heartbeat-only timeout, fresh recovery and terminal failure without payloads", async () => {

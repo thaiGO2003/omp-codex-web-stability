@@ -15,7 +15,9 @@ const cwdHeader = "x-omp-cwd";
 const diagnostics = new DiagnosticLog();
 // Native releases cancelled browser owners and tombstones their thread/turn IDs.
 // Versions outside this verified set must not receive automatic re-submissions.
-const verifiedRetirementVersions = new Set(["6.1.7", "6.1.9", "6.1.10"]);
+// 6.1.11 retains /admin/interrupt-turn's scoped cancellation acknowledgement
+// and the native owner retirement logic present in 6.1.10.
+const verifiedRetirementVersions = new Set(["6.1.7", "6.1.9", "6.1.10", "6.1.11"]);
 
 
 async function interruptNativeTurn(threadId: string | undefined, turnId: string | undefined) {
@@ -347,4 +349,4 @@ Bun.serve({
 });
 
 diagnostics.log("shim_started");
-console.log(`OMP shim listening on http://${listenHost}:${listenPort}; structured diagnostics enabled`);
+console.log(`OMP shim listening on http://${listenHost}:${listenPort}; diagnostics: ${diagnostics.status().directory}`);

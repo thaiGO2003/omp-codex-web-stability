@@ -117,6 +117,18 @@ systemctl --user restart codex-chatgpt-web-omp-shim.service
 New Windows full installs include the logger automatically. The default log
 directory on both platforms is `~/.codex-chatgpt-web/diagnostics/omp-shim/`;
 `CODEX_CHATGPT_WEB_HOME` or `OMP_CODEX_WEB_LOG_DIR` can change it.
+The shim also writes sanitized request, progress and retry events to the
+launcher console by default. Set `OMP_CODEX_WEB_CONSOLE_LOG=0` before launching
+the shim to retain file-only logging.
+
+For Codex Web **6.1.11**, the Windows installer supports scoped retry of
+`chatgpt_submitted_turn_failed` when no assistant output or tool call was
+forwarded and the request carries complete replay history. The shim reuses
+that history under a new native owner after interrupting the failed one, and
+keeps retrying recoverable failures with 2/5/10/20/30-second capped backoff.
+The upstream HTTP request may already be 200 when the SSE stream reports the
+failure. Unsupported native versions, explicit refusals, missing history,
+unsafe partial output and cancellation still stop replay.
 
 When an interruption occurs, export recent sanitized events and local health
 snapshots from the repository directory:

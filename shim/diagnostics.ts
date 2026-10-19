@@ -28,6 +28,14 @@ const numericFields = new Set([
 ]);
 const booleanFields = new Set(["sawOutput", "terminal", "recoveryEligible", "lifecycleVerified", "queued", "sse"]);
 const identityFields = new Set(["logicalThreadId", "logicalTurnId", "nativeThreadId", "nativeTurnId", "responseId"]);
+// Mirror state transitions and occasional progress to the visible PowerShell
+// window. The same allowlisted fields used on disk prevent prompt/tool leaks.
+const consoleEvents = new Set([
+  "shim_started", "request_received", "upstream_headers", "upstream_error", "stream_started",
+  "stream_progress", "stream_terminal", "stream_error", "semantic_timeout", "request_finished",
+  "cleanup_failed", "recovery_started", "recovery_connected", "recovery_failed", "recovery_stopped",
+  "submitted_retry_started", "submitted_retry_deferred", "submitted_retry_resumed", "submitted_retry_failed",
+]);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // A positive schema, rather than a secret-pattern blacklist: never accept text,
@@ -76,15 +84,22 @@ export class DiagnosticLog {
   readonly runId = randomUUID();
   private sequence = 0;
   private failedWrites = 0;
-  constructor(readonly directory = defaultLogDirectory(), private maxBytes = 2 * 1024 * 1024, private fileCount = 5) {
+  constructor(readonly directory = defaultLogDirectory(), private maxBytes = 2 * 1024 * 1024,
+    private fileCount = 5, private mirrorConsole = process.env.OMP_CODEX_WEB_CONSOLE_LOG !== "0") {
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 512 || !Number.isSafeInteger(fileCount) || fileCount < 1 || fileCount > 20) throw new Error("Invalid diagnostic retention");
   }
-  status() { return { enabled: true, runId: this.runId, directory: this.directory, maxBytes: this.maxBytes, fileCount: this.fileCount, failedWrites: this.failedWrites }; }
+  status() { return { enabled: true, consoleEnabled: this.mirrorConsole, runId: this.runId, directory: this.directory,
+    maxBytes: this.maxBytes, fileCount: this.fileCount, failedWrites: this.failedWrites }; }
   log(event: string, fields: Record<string, unknown> = {}) {
     if (!diagnosticEvents.has(event)) return;
+    const safeFields = diagnosticFields(fields);
+    if (this.mirrorConsole && consoleEvents.has(event)) {
+      try { console.info(`[OMP shim] ${event}`, safeFields); }
+      catch { /* Console mirroring is best-effort, just like disk diagnostics. */ }
+    }
     try {
       const line = JSON.stringify({ schema: 1, at: new Date().toISOString(), runId: this.runId, pid: process.pid,
-        seq: ++this.sequence, event, ...diagnosticFields(fields) }) + "\n";
+        seq: ++this.sequence, event, ...safeFields }) + "\n";
       if (Buffer.byteLength(line) > this.maxBytes) throw new Error("Diagnostic record exceeds retention budget");
       mkdirSync(this.directory, { recursive: true, mode: 0o700 });
       chmodSync(this.directory, 0o700);

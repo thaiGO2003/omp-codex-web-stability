@@ -11,9 +11,10 @@ test("real shim HTTP route retries structured submission failures with fresh own
   for (const [scenario, version] of [
     ["repeated", "6.1.10"],
     ["repeated", "6.1.9"],
+    ["repeated", "6.1.11"],
     ["invalid_ack", "6.1.10"],
     ["missing_result", "6.1.10"],
-    ["unsupported_version", "6.1.11"],
+    ["unsupported_version", "6.1.12"],
     ["transient_http", "6.1.10"],
     ["transient_health", "6.1.10"],
     ["permanent_http", "6.1.10"],

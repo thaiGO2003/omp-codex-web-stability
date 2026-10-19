@@ -38,6 +38,13 @@ the first output and at most every 30 seconds of subsequent progress. It never
 logs every token. If writing fails, the request continues and health exposes a
 failure counter; the journal receives one fixed warning without error details.
 
+The shim also mirrors sanitized request, progress, failure and retry events to
+the PowerShell launcher window by default, so a stalled or repeatedly failed
+turn is visible without opening the JSONL file. To keep that window quiet, set
+`OMP_CODEX_WEB_CONSOLE_LOG=0` before launching `start-shim.ps1`. File logging
+remains enabled either way. `/omp-shim-health` reports
+`diagnostics.consoleEnabled` for the current process.
+
 ## Export
 
 From this repository, on Linux or PowerShell with Bun:

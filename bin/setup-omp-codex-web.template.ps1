@@ -146,7 +146,7 @@ try {
         throw $writeError
     }
     Write-Output "OMP roles and provider configured: $modelsPath"
-    Write-Output 'default/vision/plan/task/web: GPT-6 Sol Web high; commit: Instant auto.'
+    Write-Output 'default/vision/plan/task/web: GPT-6 Sol Web high; advisor: GPT-6 Sol Web xhigh; commit: Instant auto.'
     Write-Output 'Other roles and compaction settings preserved. Restart OMP after setup.'
     $launcher = Join-Path $ShimDirectory 'start-shim.ps1'
     if ($existingHealth) {

@@ -53,6 +53,7 @@ class WindowsInstallTests(unittest.TestCase):
         self.assertIn('Saved-turn rebinding patch is only for 6.1.4; skipped', result.stdout)
         self.assertIn('Việt Nam', config.read_text())
         self.assertIn('codex-chatgpt-web/chatgpt-web/gpt-6-sol-instant:auto', config.read_text())
+        self.assertIn('advisor: codex-chatgpt-web/chatgpt-web/gpt-6-sol:xhigh', config.read_text())
         self.assertNotIn('keep/judge', config.read_text())
         self.assertIn('shake', config.read_text())
         self.assertIn('handoff', config.read_text())

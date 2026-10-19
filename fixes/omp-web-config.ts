@@ -25,6 +25,9 @@ export function configureOmpWeb(configText: string, modelsText: string, baseUrl:
     vision: `codex-chatgpt-web/${sol}:high`,
     plan: `codex-chatgpt-web/${sol}:high`,
     task: `codex-chatgpt-web/${sol}:high`,
+    // Advisor reviews deserve the full Sol model with deliberate reasoning.
+    // Pin this role to avoid the built-in openai-codex/gpt-5.6-sol fallback.
+    advisor: `codex-chatgpt-web/${sol}:xhigh`,
     commit: `codex-chatgpt-web/${instant}:auto`,
     judge: `codex-chatgpt-web/${instant}:auto`,
     web: `openai-codex/${sol}:high`,

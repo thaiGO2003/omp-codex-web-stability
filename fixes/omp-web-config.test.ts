@@ -3,7 +3,7 @@ import { configureOmpWeb } from "./omp-web-config";
 import installExtension from "../shim/omp-extension";
 
 test("Web roles and both providers are configured without changing compaction or other providers", () => {
-  const config = { modelRoles: { default: "old/model", advisor: "openai-codex/gpt-5.6-sol", judge: "existing/judge", speech: "local/kokoro" },
+  const config = { modelRoles: { default: "old/model", advisor: "openai-codex/gpt-5.6-sol", judge: "existing/judge", tiny: "old/tiny", memory: "old/memory", smol: "old/smol", slow: "old/slow", speech: "local/kokoro" },
     compaction: { methodOrder: ["soft"] }, theme: { dark: "mine" } };
   const models = { providers: { existing: { apiKey: "keep-local-value", models: [] } } };
   const result = configureOmpWeb(Bun.YAML.stringify(config), Bun.YAML.stringify(models), "http://127.0.0.1:18842/v1");
@@ -13,6 +13,10 @@ test("Web roles and both providers are configured without changing compaction or
   expect(c.modelRoles.web).toBe("openai-codex/chatgpt-web/gpt-6-sol:high");
   expect(c.modelRoles.commit).toBe("codex-chatgpt-web/chatgpt-web/gpt-6-sol-instant:auto");
   expect(c.modelRoles.judge).toBe("codex-chatgpt-web/chatgpt-web/gpt-6-sol-instant:auto");
+  expect(c.modelRoles.tiny).toBe("openai-codex/chatgpt-web/gpt-6-sol:auto");
+  expect(c.modelRoles.memory).toBe("codex-chatgpt-web/chatgpt-web/gpt-5.6-sol:high");
+  expect(c.modelRoles.smol).toBe("codex-chatgpt-web/chatgpt-web/gpt-6-sol:auto");
+  expect(c.modelRoles.slow).toBe("codex-chatgpt-web/chatgpt-web/gpt-6-sol:high");
   expect(c.modelRoles.speech).toBe("local/kokoro");
   expect(c.compaction).toEqual(config.compaction);
   expect(c.theme).toEqual(config.theme);
@@ -21,7 +25,7 @@ test("Web roles and both providers are configured without changing compaction or
   expect(m.providers["codex-chatgpt-web"].baseUrl).toBe("http://127.0.0.1:18842/v1");
   expect(m.providers["openai-codex"].models).toHaveLength(2);
   expect(m.providers["codex-chatgpt-web"].models.map((model: any) => model.id)).toEqual([
-    "chatgpt-web/gpt-6-sol", "chatgpt-web/gpt-6-sol-instant",
+    "chatgpt-web/gpt-5.6-sol", "chatgpt-web/gpt-6-sol", "chatgpt-web/gpt-6-sol-instant",
   ]);
   expect(configureOmpWeb(result.config, result.models, "http://127.0.0.1:18842/v1")).toEqual(result);
 });
@@ -36,6 +40,14 @@ test("overwriting a Web provider drops stale remote auth and keeps unrelated mod
   expect(p.headers.custom).toBe("keep");
   expect(p.models[0].id).toBe("custom");
   expect(p.auth).toBe("none");
+});
+
+test("keeps an existing custom GPT-5.6 memory model definition without duplication", () => {
+  const memory = { id: "chatgpt-web/gpt-5.6-sol", name: "My existing memory model", maxTokens: 4096 };
+  const models = { providers: { "codex-chatgpt-web": { models: [memory] } } };
+  const result = Bun.YAML.parse(configureOmpWeb("", Bun.YAML.stringify(models), "http://localhost:17842/v1").models) as any;
+  const entries = result.providers["codex-chatgpt-web"].models.filter((m: any) => m.id === memory.id);
+  expect(entries).toEqual([memory]);
 });
 
 test("legacy router URL preserves provider setup while judge remains GPT-6 Instant", () => {

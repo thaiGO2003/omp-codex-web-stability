@@ -77,6 +77,14 @@ class WebSetupTests(unittest.TestCase):
         self.assertIn('codex-chatgpt-web/chatgpt-web/gpt-6-sol:high', (self.agent / 'config.yml').read_text())
         self.assertIn('advisor: codex-chatgpt-web/chatgpt-web/gpt-6-sol:xhigh',
                       (self.agent / 'config.yml').read_text())
+        self.assertIn('tiny: openai-codex/chatgpt-web/gpt-6-sol:auto',
+                      (self.agent / 'config.yml').read_text())
+        self.assertIn('memory: codex-chatgpt-web/chatgpt-web/gpt-5.6-sol:high',
+                      (self.agent / 'config.yml').read_text())
+        self.assertIn('smol: codex-chatgpt-web/chatgpt-web/gpt-6-sol:auto',
+                      (self.agent / 'config.yml').read_text())
+        self.assertIn('slow: codex-chatgpt-web/chatgpt-web/gpt-6-sol:high',
+                      (self.agent / 'config.yml').read_text())
         self.assertIn('judge: codex-chatgpt-web/chatgpt-web/gpt-6-sol-instant:auto',
                       (self.agent / 'config.yml').read_text())
         self.assertIn(f'http://127.0.0.1:{self.shim_port}/v1', (self.agent / 'models.yml').read_text())

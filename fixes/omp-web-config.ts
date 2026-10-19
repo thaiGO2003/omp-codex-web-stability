@@ -16,6 +16,7 @@ function serialize(value: Mapping, original: string): string {
 }
 const sol = "chatgpt-web/gpt-6-sol";
 const instant = "chatgpt-web/gpt-6-sol-instant";
+const memorySol = "chatgpt-web/gpt-5.6-sol";
 export function configureOmpWeb(configText: string, modelsText: string, baseUrl: string, judgeUrl?: string) {
   const config = parse(configText, "OMP config");
   const models = parse(modelsText, "OMP models");
@@ -29,8 +30,12 @@ export function configureOmpWeb(configText: string, modelsText: string, baseUrl:
     // Pin this role to avoid the built-in openai-codex/gpt-5.6-sol fallback.
     advisor: `codex-chatgpt-web/${sol}:xhigh`,
     commit: `codex-chatgpt-web/${instant}:auto`,
-    judge: `codex-chatgpt-web/${instant}:auto`,
     web: `openai-codex/${sol}:high`,
+    judge: `codex-chatgpt-web/${instant}:auto`,
+    tiny: `openai-codex/${sol}:auto`,
+    memory: `codex-chatgpt-web/${memorySol}:high`,
+    smol: `codex-chatgpt-web/${sol}:auto`,
+    slow: `codex-chatgpt-web/${sol}:high`,
   });
   config.modelRoles = roles;
   const providers = mapping(models.providers, "providers");
@@ -42,6 +47,11 @@ export function configureOmpWeb(configText: string, modelsText: string, baseUrl:
       thinking: { mode: "effort", efforts: ["low"], defaultLevel: "low" },
       input: ["text"], supportsTools: true, contextWindow: 41000, maxTokens: 16384 },
   ];
+  // Keep the user-selected GPT-5.6 memory role resolvable on fresh installs.
+  // Preserve an existing custom definition if the model is already configured.
+  const memoryDefinition = { id: memorySol, name: "GPT-5.6 Sol (Web)", preferWebsockets: false, reasoning: true,
+    thinking: { mode: "effort", efforts: ["medium", "high", "xhigh"], defaultLevel: "high" },
+    input: ["text"], supportsTools: true, contextWindow: 90000, maxTokens: 16384 };
   for (const name of ["codex-chatgpt-web", "openai-codex"]) {
     const previous = mapping(providers[name], name);
     if (previous.models !== undefined && !Array.isArray(previous.models)) throw new Error(`${name}.models must be a list`);
@@ -50,7 +60,11 @@ export function configureOmpWeb(configText: string, modelsText: string, baseUrl:
     const provider = { ...previous, baseUrl, api: "openai-codex-responses", auth: "none",
       // This header marks OMP requests; the extension supplies each session's actual cwd.
       headers: { ...headers, "x-omp-cwd": "OMP_WORKSPACE_CWD" },
-      models: [...entries.filter((model: any) => !definitions.some(d => d.id === model?.id)), ...definitions],
+      models: [
+        ...entries.filter((model: any) => !definitions.some(d => d.id === model?.id)),
+        ...(name === "codex-chatgpt-web" && !entries.some((model: any) => model?.id === memorySol) ? [memoryDefinition] : []),
+        ...definitions,
+      ],
     } as Mapping;
     delete provider.apiKey;
     delete provider.oauth;

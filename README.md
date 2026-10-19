@@ -404,7 +404,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\setup-omp-codex-web.ps1
 
 It updates `%USERPROFILE%\.omp\agent\config.yml` and `models.yml`, backing up
 changed files. Default, vision, plan, task and web roles use GPT-6 Sol Web High;
-advisor uses GPT-6 Sol Web XHigh for careful reviews, while commit and judge use GPT-6 Sol Instant Auto. It preserves compaction settings and other roles
+advisor uses GPT-6 Sol Web XHigh for careful reviews, while commit and judge use GPT-6 Sol Instant Auto. Tiny uses OpenAI Codex GPT-6 Sol Auto; memory uses GPT-5.6 Sol Web High; smol and slow use GPT-6 Sol Web Auto and High respectively. It preserves compaction settings and unrelated roles
 and providers. The shim is installed under
 `%USERPROFILE%\.local\share\codex-chatgpt-web-omp-shim` and starts in a separate
 PowerShell window. Keep that window open, then restart OMP.

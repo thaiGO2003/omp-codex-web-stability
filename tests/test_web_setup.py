@@ -75,7 +75,7 @@ class WebSetupTests(unittest.TestCase):
         self.assertIn('GPT-6 Sol and Instant are listed', result.stdout)
         self.assertTrue((self.agent / 'extensions/codex-chatgpt-web-compat.ts').is_file())
         self.assertIn('codex-chatgpt-web/chatgpt-web/gpt-6-sol:high', (self.agent / 'config.yml').read_text())
-        self.assertIn('advisor: codex-chatgpt-web/chatgpt-web/gpt-6-sol:xhigh',
+        self.assertIn('advisor: codex-chatgpt-web/chatgpt-web/gpt-6-sol:high',
                       (self.agent / 'config.yml').read_text())
         self.assertIn('tiny: openai-codex/chatgpt-web/gpt-6-sol:auto',
                       (self.agent / 'config.yml').read_text())

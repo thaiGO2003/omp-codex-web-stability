@@ -9,7 +9,7 @@ test("Web roles and both providers are configured without changing compaction or
   const result = configureOmpWeb(Bun.YAML.stringify(config), Bun.YAML.stringify(models), "http://127.0.0.1:18842/v1");
   const c = Bun.YAML.parse(result.config) as any, m = Bun.YAML.parse(result.models) as any;
   expect(c.modelRoles.default).toBe("codex-chatgpt-web/chatgpt-web/gpt-6-sol:high");
-  expect(c.modelRoles.advisor).toBe("codex-chatgpt-web/chatgpt-web/gpt-6-sol:xhigh");
+  expect(c.modelRoles.advisor).toBe("codex-chatgpt-web/chatgpt-web/gpt-6-sol:high");
   expect(c.modelRoles.web).toBe("openai-codex/chatgpt-web/gpt-6-sol:high");
   expect(c.modelRoles.commit).toBe("codex-chatgpt-web/chatgpt-web/gpt-6-sol-instant:auto");
   expect(c.modelRoles.judge).toBe("codex-chatgpt-web/chatgpt-web/gpt-6-sol-instant:auto");

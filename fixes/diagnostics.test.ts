@@ -36,7 +36,7 @@ test("bounded logging and export discard content, credentials and unrecognized f
       const report = gunzipSync(readFileSync(output)).toString("utf8");
       expect(report).not.toContain(secret);
       expect(JSON.parse(report).logs.records).toHaveLength(3);
-      expect(statSync(output).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") expect(statSync(output).mode & 0o777).toBe(0o600);
       await expect(collect({ directory: dir, output, hours: 24, upstream: `http://127.0.0.1:${server.port}`, shimPort: server.port! })).rejects.toThrow();
     } finally { await server.stop(true); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -52,10 +52,10 @@ test("rotation bounds disk usage, restricts permissions and logging failures are
     expect(files.sort()).toEqual(["shim.jsonl", "shim.jsonl.1", "shim.jsonl.2"]);
     for (const file of files) {
       expect(statSync(join(dir, file)).size).toBeLessThanOrEqual(1024);
-      expect(statSync(join(dir, file)).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") expect(statSync(join(dir, file)).mode & 0o777).toBe(0o600);
       for (const line of readFileSync(join(dir, file), "utf8").trim().split("\n")) expect(JSON.parse(line).schema).toBe(1);
     }
-    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect(statSync(dir).mode & 0o777).toBe(0o700);
     const oneDir = join(dir, "single");
     const one = new DiagnosticLog(oneDir, 512, 1);
     for (let i = 0; i < 30; i++) one.log("shim_started");

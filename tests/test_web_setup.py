@@ -35,7 +35,8 @@ class Bridge(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        self.send_json({'data': [{'id': 'chatgpt-web/gpt-5.6-sol'}]})
+        self.send_json({'data': [{'id': 'chatgpt-web/gpt-6-sol'},
+                                 {'id': 'chatgpt-web/gpt-6-sol-instant'}]})
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
@@ -71,9 +72,11 @@ class WebSetupTests(unittest.TestCase):
         standalone.write_bytes(SCRIPT.read_bytes())
         result = self.run_setup(script=standalone)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('Sol is listed', result.stdout)
+        self.assertIn('GPT-6 Sol and Instant are listed', result.stdout)
         self.assertTrue((self.agent / 'extensions/codex-chatgpt-web-compat.ts').is_file())
-        self.assertIn('codex-chatgpt-web/chatgpt-web/gpt-5.6-sol:high', (self.agent / 'config.yml').read_text())
+        self.assertIn('codex-chatgpt-web/chatgpt-web/gpt-6-sol:high', (self.agent / 'config.yml').read_text())
+        self.assertIn('judge: codex-chatgpt-web/chatgpt-web/gpt-6-sol-instant:auto',
+                      (self.agent / 'config.yml').read_text())
         self.assertIn(f'http://127.0.0.1:{self.shim_port}/v1', (self.agent / 'models.yml').read_text())
         process = subprocess.Popen([POWERSHELL, '-NoProfile', '-NonInteractive', '-File', str(self.shim / 'start-shim.ps1')],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -90,8 +93,17 @@ class WebSetupTests(unittest.TestCase):
             else:
                 self.fail('Installed shim did not start')
             self.assertEqual(health['upstreamOrigin'], self.upstream)
+            # Re-launching the same shim must reuse the active instance instead
+            # of failing with EADDRINUSE or interrupting an in-flight OMP turn.
+            duplicate = subprocess.run([
+                POWERSHELL, '-NoProfile', '-NonInteractive', '-File',
+                str(self.shim / 'start-shim.ps1'),
+            ], capture_output=True, text=True, timeout=10)
+            self.assertEqual(duplicate.returncode, 0, duplicate.stderr)
+            self.assertIn('already running', duplicate.stdout)
+            self.assertIsNone(process.poll(), 'Original shim must remain running')
             payload = {
-                '__omp_cwd': str(self.root), 'model': 'chatgpt-web/gpt-5.6-sol',
+                '__omp_cwd': str(self.root), 'model': 'chatgpt-web/gpt-6-sol',
                 'client_metadata': {'x-codex-turn-metadata': json.dumps({'thread_id': 'test-thread', 'turn_id': 'test-turn'})},
                 'input': [{'role': 'user', 'content': 'test'},
                           {'type': 'function_call_output', 'call_id': 'call_test__omp', 'output': 'OK'}],
@@ -123,7 +135,8 @@ class WebSetupTests(unittest.TestCase):
         result = self.run_setup()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Việt Nam', config.read_text())
-        self.assertIn('keep/judge', config.read_text())
+        self.assertIn('codex-chatgpt-web/chatgpt-web/gpt-6-sol-instant:auto', config.read_text())
+        self.assertNotIn('keep/judge', config.read_text())
         self.assertIn('soft', config.read_text())
         self.assertIn('local-secret-placeholder', models.read_text())
         self.assertNotIn('local-secret-placeholder', result.stdout + result.stderr)
@@ -147,6 +160,19 @@ class WebSetupTests(unittest.TestCase):
         self.assertEqual(config.read_text(), 'modelRoles: []\n')
         self.assertFalse(self.shim.exists())
         self.assertFalse(list(self.agent.glob('*.bak')))
+
+    def test_occupied_shim_port_refuses_before_changing_files(self):
+        # The fake upstream is a live HTTP service, not an OMP shim.
+        result = subprocess.run([
+            POWERSHELL, '-NoProfile', '-NonInteractive', '-File', str(SCRIPT),
+            '-BunPath', BUN, '-AgentDirectory', str(self.agent),
+            '-ShimDirectory', str(self.shim), '-UpstreamUrl', 'http://127.0.0.1:1',
+            '-ShimPort', str(self.bridge.server_port), '-NoStart',
+        ], capture_output=True, text=True, timeout=25)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('already occupied', result.stderr)
+        self.assertFalse(self.shim.exists())
+        self.assertFalse(self.agent.exists())
 
     def test_write_failure_restores_config_models_and_new_shim_files(self):
         self.agent.mkdir()

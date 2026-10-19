@@ -14,8 +14,8 @@ function serialize(value: Mapping, original: string): string {
   const text = Bun.YAML.stringify(value) + "\n";
   return original.includes("\r\n") ? text.replaceAll("\n", "\r\n") : text;
 }
-const sol = "chatgpt-web/gpt-5.6-sol";
-const instant = "chatgpt-web/gpt-5.6-sol-instant";
+const sol = "chatgpt-web/gpt-6-sol";
+const instant = "chatgpt-web/gpt-6-sol-instant";
 export function configureOmpWeb(configText: string, modelsText: string, baseUrl: string, judgeUrl?: string) {
   const config = parse(configText, "OMP config");
   const models = parse(modelsText, "OMP models");
@@ -26,15 +26,16 @@ export function configureOmpWeb(configText: string, modelsText: string, baseUrl:
     plan: `codex-chatgpt-web/${sol}:high`,
     task: `codex-chatgpt-web/${sol}:high`,
     commit: `codex-chatgpt-web/${instant}:auto`,
+    judge: `codex-chatgpt-web/${instant}:auto`,
     web: `openai-codex/${sol}:high`,
   });
   config.modelRoles = roles;
   const providers = mapping(models.providers, "providers");
   const definitions = [
-    { id: sol, name: "GPT-5.6 Sol (Web)", preferWebsockets: false, reasoning: true,
+    { id: sol, name: "GPT-6 Sol (Web)", preferWebsockets: false, reasoning: true,
       thinking: { mode: "effort", efforts: ["medium", "high", "xhigh"], defaultLevel: "high" },
       input: ["text"], supportsTools: true, contextWindow: 90000, maxTokens: 16384 },
-    { id: instant, name: "GPT-5.6 Sol Instant (Web)", preferWebsockets: false, reasoning: true,
+    { id: instant, name: "GPT-6 Sol Instant (Web)", preferWebsockets: false, reasoning: true,
       thinking: { mode: "effort", efforts: ["low"], defaultLevel: "low" },
       input: ["text"], supportsTools: true, contextWindow: 41000, maxTokens: 16384 },
   ];
@@ -56,7 +57,7 @@ export function configureOmpWeb(configText: string, modelsText: string, baseUrl:
     }
     providers[name] = provider;
   }
-  // Existing judge settings are retained unless the user supplies a router URL.
+  // A legacy router URL may still configure its provider, but judge uses GPT-6 Instant.
   if (judgeUrl) {
     const previous = mapping(providers["9router"], "9router");
     const entries = previous.models ?? [];
@@ -67,7 +68,6 @@ export function configureOmpWeb(configText: string, modelsText: string, baseUrl:
     } as Mapping;
     if (!previous.apiKey && previous.auth !== "none") provider.apiKey = "NINE_ROUTER_API_KEY";
     providers["9router"] = provider;
-    roles.judge = "9router/oc/jev-1.13-free";
   }
   models.providers = providers;
   return { config: serialize(config, configText), models: serialize(models, modelsText) };

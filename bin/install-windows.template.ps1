@@ -30,6 +30,15 @@ $OutputEncoding = $utf8
 # EMBEDDED WINDOWS INSTALL PAYLOAD
 
 function Invoke-BundledScript([string]$Name, [hashtable]$Options) {
+    # Preserve the resolved binary for freshly installed Bun: PowerShell child
+    # processes may not have the updated user PATH from the Bun installer yet.
+    if ($Options.ContainsKey('BunPath') -and $Options.BunPath) {
+        $env:OMP_CODEX_WEB_BUN_PATH = [string]$Options.BunPath
+        $bunBinDirectory = Split-Path -Parent ([string]$Options.BunPath)
+        if (@($env:PATH -split ';') -notcontains $bunBinDirectory) {
+            $env:PATH = "$bunBinDirectory;$env:PATH"
+        }
+    }
     $childArguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
         '-File', (Join-Path $workDirectory $Name))
     foreach ($key in $Options.Keys) {
@@ -81,6 +90,44 @@ function Test-HelperWritable([string]$Path) {
     } catch { return $false }
 }
 
+function Resolve-BunPath([string]$RequestedPath, [bool]$Preview) {
+    if ($RequestedPath) {
+        if (-not [IO.File]::Exists($RequestedPath)) { throw "Bun not found at -BunPath: $RequestedPath" }
+        return [IO.Path]::GetFullPath($RequestedPath)
+    }
+
+    $command = Get-Command bun.exe -ErrorAction SilentlyContinue
+    if ($command -and [IO.File]::Exists($command.Source)) { return [IO.Path]::GetFullPath($command.Source) }
+
+    $bunHome = if ($env:BUN_INSTALL) { $env:BUN_INSTALL } else { Join-Path ([Environment]::GetFolderPath('UserProfile')) '.bun' }
+    $localBun = Join-Path $bunHome 'bin/bun.exe'
+    if ([IO.File]::Exists($localBun)) { return [IO.Path]::GetFullPath($localBun) }
+    if ($Preview) { throw 'Bun not found. -DryRun does not install dependencies; install Bun or supply -BunPath.' }
+
+    Write-Host 'Bun not found. Downloading and installing Bun from https://bun.sh/install.ps1 ...'
+    $installerPath = Join-Path ([IO.Path]::GetTempPath()) ('omp-bun-install-' + [guid]::NewGuid().ToString('N') + '.ps1')
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -UseBasicParsing -Uri 'https://bun.sh/install.ps1' -OutFile $installerPath -TimeoutSec 60
+        $tokens = $null
+        $parseErrors = $null
+        [void][Management.Automation.Language.Parser]::ParseFile($installerPath, [ref]$tokens, [ref]$parseErrors)
+        if ($parseErrors.Count -gt 0) { throw 'Downloaded Bun installer failed PowerShell syntax validation.' }
+        & $shellPath -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $installerPath
+        if ($LASTEXITCODE -ne 0) { throw "Bun installer exited with code $LASTEXITCODE." }
+    } catch {
+        throw "Automatic Bun installation failed: $($_.Exception.Message) Install Bun manually or supply -BunPath."
+    } finally {
+        if ([IO.File]::Exists($installerPath)) { [IO.File]::Delete($installerPath) }
+    }
+
+    if (-not [IO.File]::Exists($localBun)) { throw "Bun installer completed but bun.exe was not found at $localBun. Supply -BunPath if installed elsewhere." }
+    $version = & $localBun --version
+    if ($LASTEXITCODE -ne 0) { throw "Bun was installed but cannot run: $localBun" }
+    Write-Host "Bun ready: $localBun (version $version)"
+    return [IO.Path]::GetFullPath($localBun)
+}
+
 $workDirectory = $null
 try {
     $shellPath = (Get-Process -Id $PID).Path
@@ -91,13 +138,7 @@ try {
     $AgentDirectory = [IO.Path]::GetFullPath($AgentDirectory)
     if (-not $ShimDirectory) { $ShimDirectory = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.local/share/codex-chatgpt-web-omp-shim' }
     $ShimDirectory = [IO.Path]::GetFullPath($ShimDirectory)
-    if (-not $BunPath) {
-        $command = Get-Command bun -ErrorAction SilentlyContinue
-        if ($command) { $BunPath = $command.Source }
-        else { $BunPath = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.bun/bin/bun.exe' }
-    }
-    if (-not [IO.File]::Exists($BunPath)) { throw 'Bun not found. Install Bun, then rerun install.bat; or supply -BunPath C:\path\bun.exe. Codex Web and OMP must also be installed.' }
-    $BunPath = [IO.Path]::GetFullPath($BunPath)
+    $BunPath = Resolve-BunPath $BunPath ([bool]$DryRun)
     $workDirectory = Join-Path ([IO.Path]::GetTempPath()) ('omp-stability-' + [guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($workDirectory)
     $payload = $payloadJson | ConvertFrom-Json

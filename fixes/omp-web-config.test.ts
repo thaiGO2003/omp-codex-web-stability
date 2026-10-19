@@ -8,10 +8,10 @@ test("Web roles and both providers are configured without changing compaction or
   const models = { providers: { existing: { apiKey: "keep-local-value", models: [] } } };
   const result = configureOmpWeb(Bun.YAML.stringify(config), Bun.YAML.stringify(models), "http://127.0.0.1:18842/v1");
   const c = Bun.YAML.parse(result.config) as any, m = Bun.YAML.parse(result.models) as any;
-  expect(c.modelRoles.default).toBe("codex-chatgpt-web/chatgpt-web/gpt-5.6-sol:high");
-  expect(c.modelRoles.web).toBe("openai-codex/chatgpt-web/gpt-5.6-sol:high");
-  expect(c.modelRoles.commit).toEndWith(":auto");
-  expect(c.modelRoles.judge).toBe("existing/judge");
+  expect(c.modelRoles.default).toBe("codex-chatgpt-web/chatgpt-web/gpt-6-sol:high");
+  expect(c.modelRoles.web).toBe("openai-codex/chatgpt-web/gpt-6-sol:high");
+  expect(c.modelRoles.commit).toBe("codex-chatgpt-web/chatgpt-web/gpt-6-sol-instant:auto");
+  expect(c.modelRoles.judge).toBe("codex-chatgpt-web/chatgpt-web/gpt-6-sol-instant:auto");
   expect(c.modelRoles.speech).toBe("local/kokoro");
   expect(c.compaction).toEqual(config.compaction);
   expect(c.theme).toEqual(config.theme);
@@ -19,6 +19,9 @@ test("Web roles and both providers are configured without changing compaction or
   expect(m.providers["codex-chatgpt-web"].api).toBe("openai-codex-responses");
   expect(m.providers["codex-chatgpt-web"].baseUrl).toBe("http://127.0.0.1:18842/v1");
   expect(m.providers["openai-codex"].models).toHaveLength(2);
+  expect(m.providers["codex-chatgpt-web"].models.map((model: any) => model.id)).toEqual([
+    "chatgpt-web/gpt-6-sol", "chatgpt-web/gpt-6-sol-instant",
+  ]);
   expect(configureOmpWeb(result.config, result.models, "http://127.0.0.1:18842/v1")).toEqual(result);
 });
 
@@ -34,10 +37,10 @@ test("overwriting a Web provider drops stale remote auth and keeps unrelated mod
   expect(p.auth).toBe("none");
 });
 
-test("optional router judge uses the supplied URL and local environment credentials", () => {
+test("legacy router URL preserves provider setup while judge remains GPT-6 Instant", () => {
   const result = configureOmpWeb("", "", "http://localhost:17842/v1", "http://localhost:20218");
   const c = Bun.YAML.parse(result.config) as any, m = Bun.YAML.parse(result.models) as any;
-  expect(c.modelRoles.judge).toBe("9router/oc/jev-1.13-free");
+  expect(c.modelRoles.judge).toBe("codex-chatgpt-web/chatgpt-web/gpt-6-sol-instant:auto");
   expect(m.providers["9router"].apiKey).toBe("NINE_ROUTER_API_KEY");
   expect(m.providers["9router"].baseUrl).toBe("http://localhost:20218");
 });

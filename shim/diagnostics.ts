@@ -8,6 +8,7 @@ export const diagnosticEvents = new Set([
   "upstream_headers", "upstream_error", "stream_started", "stream_progress", "stream_terminal", "stream_eof",
   "stream_error", "stream_cancelled", "semantic_timeout", "cleanup_started", "cleanup_completed", "cleanup_failed",
   "recovery_started", "recovery_lifecycle", "recovery_connecting", "recovery_connected", "recovery_failed", "recovery_stopped", "request_finished",
+  "submitted_retry_started", "submitted_retry_deferred", "submitted_retry_resumed", "submitted_retry_failed",
 ]);
 const eventTypes = new Set([
   "response.created", "response.completed", "response.incomplete", "response.done", "response.failed", "error",
@@ -42,9 +43,9 @@ export function diagnosticFields(fields: Record<string, unknown>, alreadyHashed 
     } else if (key === "requestId" && typeof value === "string" && uuid.test(value)) safe[key] = value;
     else if (key === "eventType") safe[key] = eventTypes.has(String(value)) ? value : "unknown";
     else if (key === "errorCode") safe[key] = errorCodes.has(String(value)) ? value : "unknown";
-    else if (key === "errorName") safe[key] = ["Error", "TypeError", "AbortError", "TimeoutError", "SyntaxError"].includes(String(value)) ? value : "Error";
+    else if (key === "errorName") safe[key] = ["Error", "TypeError", "AbortError", "TimeoutError", "SyntaxError", "TemporarySubmissionTransportError"].includes(String(value)) ? value : "Error";
     else if (key === "outcome") safe[key] = ["eof", "error", "cancelled", "no_body", "local", "http_error"].includes(String(value)) ? value : "unknown";
-    else if (key === "phase") safe[key] = ["stall", "cancel", "retire", "health", "connect"].includes(String(value)) ? value : "unknown";
+    else if (key === "phase") safe[key] = ["stall", "cancel", "retire", "health", "connect", "submitted_failure"].includes(String(value)) ? value : "unknown";
   }
   return safe;
 }

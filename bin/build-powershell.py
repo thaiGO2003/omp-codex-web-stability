@@ -35,7 +35,7 @@ script.write_text(text[:start] + payload + text[stop:])
 
 # The Web setup is self-contained, including the base shim and OMP request hook.
 files = {name: (root / 'shim' / name).read_text() for name in
-         ['server.ts', 'compatibility.ts', 'task-label.ts', 'tool-call-ids.ts', 'diagnostics.ts', 'start-shim.ps1']}
+         ['server.ts', 'compatibility.ts', 'task-label.ts', 'tool-call-ids.ts', 'diagnostics.ts', 'submitted-turn-retry.ts', 'start-shim.ps1']}
 files['sse-watchdog.ts'] = (root / 'fixes/sse-watchdog.ts').read_text()
 (root / 'shim/sse-watchdog.ts').write_text(files['sse-watchdog.ts'])
 web_payload = json.dumps({

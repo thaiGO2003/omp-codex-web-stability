@@ -6,12 +6,16 @@ import { record, addCodexEnvironment } from "./compatibility";
 import { taskLabelResponse } from "./task-label";
 import { translateToolCallIds, translateResponseStream } from "./tool-call-ids";
 import { DiagnosticLog, errorFields } from "./diagnostics";
+import { retrySubmittedTurnStream, TemporarySubmissionTransportError } from "./submitted-turn-retry";
 
 const listenHost = "127.0.0.1";
 const listenPort = Number(process.env.OMP_CODEX_WEB_SHIM_PORT || 3007);
 const upstreamOrigin = process.env.OMP_CODEX_WEB_UPSTREAM || "http://127.0.0.1:17841";
 const cwdHeader = "x-omp-cwd";
 const diagnostics = new DiagnosticLog();
+// Native releases cancelled browser owners and tombstones their thread/turn IDs.
+// Versions outside this verified set must not receive automatic re-submissions.
+const verifiedRetirementVersions = new Set(["6.1.7", "6.1.9", "6.1.10"]);
 
 
 async function interruptNativeTurn(threadId: string | undefined, turnId: string | undefined) {
@@ -224,21 +228,26 @@ Bun.serve({
     log("upstream_headers", { httpStatus: upstream.status, sse: Boolean(isOmpStream) });
     const responseHeaders = new Headers(upstream.headers);
     if (isOmpStream) responseHeaders.delete("content-length");
+    let eligibleHistory = false;
+    if (isOmpStream && typeof body === "string") {
+      try { eligibleHistory = hasCompleteRecoveryInput(JSON.parse(body)); }
+      catch { /* The upstream response owns invalid requests. */ }
+    }
     const guardedBody = isOmpStream && threadId && turnId ? guardResponseStream(upstream.body!, {
       onDiagnostic: log,
       onStall: () => interrupt("stall"),
       onCancel: () => interrupt("cancel"),
-      onRecover: typeof body === "string" && hasCompleteRecoveryInput(JSON.parse(body))
+      onRecover: eligibleHistory
         ? async signal => {
           // This native version waits for the old owner's physical retirement.
           const health = await fetch(new URL("/healthz", upstreamOrigin), {
             signal: AbortSignal.any([req.signal, signal, AbortSignal.timeout(5000)]),
           });
           log("upstream_headers", { phase: "health", httpStatus: health.status });
-          const lifecycleVerified = health.ok && ["6.1.7", "6.1.9"].includes((await health.json()).version);
+          const lifecycleVerified = health.ok && verifiedRetirementVersions.has((await health.json()).version);
           log("recovery_lifecycle", { lifecycleVerified });
           if (!lifecycleVerified) {
-            throw new Error("Silent recovery requires a verified Codex Web 6.1.7 or 6.1.9 lifecycle");
+            throw new Error("Silent recovery requires a verified Codex Web retirement lifecycle");
           }
           // The old identity is permanently cancelled by the native runtime.
           // Fresh thread ownership also prevents reuse of its terminated MCP chat.
@@ -265,7 +274,65 @@ Bun.serve({
           return replacement.body;
         } : undefined,
     }) : upstream.body;
-    const responseBody = isOmpStream ? translateResponseStream(guardedBody!) : guardedBody;
+    const submittedRetry = isOmpStream && upstream.status === 200 && threadId && turnId && guardedBody
+      ? retrySubmittedTurnStream(guardedBody, {
+        signal: req.signal,
+        onDiagnostic: log,
+        onRetry: eligibleHistory ? async (attempt, signal) => {
+          // A failed submission is not evidence that its old browser has stopped.
+          // Require the verified retirement lifecycle before allocating a new
+          // native identity; old thread/turn IDs may be tombstoned after abort.
+          let health: Response;
+          try {
+            health = await fetch(new URL("/healthz", upstreamOrigin), {
+              signal: AbortSignal.any([req.signal, signal, AbortSignal.timeout(5000)]),
+            });
+          } catch (error) {
+            if (req.signal.aborted || signal.aborted) throw error;
+            throw new TemporarySubmissionTransportError();
+          }
+          if (health.status === 429 || health.status >= 500) {
+            await health.body?.cancel().catch(() => {});
+            throw new TemporarySubmissionTransportError(health.status);
+          }
+          if (!health.ok || !verifiedRetirementVersions.has((await health.json()).version)) {
+            throw new Error("Submitted-turn recovery requires a verified native retirement lifecycle");
+          }
+          await interrupt("submitted_failure");
+          const owner = recoveryIdentities.rotate(logicalThreadId!, logicalTurnId!);
+          body = recoveryIdentities.rebind(body as string, headers, owner);
+          threadId = owner.threadId;
+          turnId = owner.turnId;
+          const connect = new AbortController();
+          const deadline = setTimeout(() => connect.abort(), 20_000);
+          let replacement: Response;
+          try {
+            replacement = await fetch(upstreamUrl, {
+              method: req.method, headers, body, redirect: "manual",
+              signal: AbortSignal.any([req.signal, signal, connect.signal]),
+            });
+          } catch (error) {
+            if (req.signal.aborted || signal.aborted) throw error;
+            throw new TemporarySubmissionTransportError();
+          } finally { clearTimeout(deadline); }
+          const isStream = replacement.headers.get("content-type")?.includes("text/event-stream");
+          log("upstream_headers", { httpStatus: replacement.status, sse: Boolean(isStream), attempt });
+          if (replacement.status === 429 || replacement.status >= 500) {
+            await replacement.body?.cancel().catch(() => {});
+            throw new TemporarySubmissionTransportError(replacement.status);
+          }
+          if (replacement.status !== 200 || !replacement.body || !isStream) {
+            await replacement.body?.cancel();
+            throw new Error(`Submitted-turn replacement HTTP ${replacement.status}; expected 200 SSE`);
+          }
+          return guardResponseStream(replacement.body, {
+            onDiagnostic: log,
+            onStall: () => interrupt("stall"),
+            onCancel: () => interrupt("cancel"),
+          });
+        } : undefined,
+      }) : guardedBody;
+    const responseBody = isOmpStream ? translateResponseStream(submittedRetry!) : submittedRetry;
     const serializedBody = responseBody
       ? releaseWhenDone(responseBody, releaseThread ?? (() => {}), finish)
       : responseBody;

@@ -35,6 +35,17 @@ function Get-ShimHealth([string]$Url) {
     catch { return $null }
 }
 
+function Test-ShimPortBusy([int]$Port) {
+    $client = [Net.Sockets.TcpClient]::new()
+    try {
+        $connection = $client.BeginConnect('127.0.0.1', $Port, $null, $null)
+        if (-not $connection.AsyncWaitHandle.WaitOne(300)) { return $false }
+        $client.EndConnect($connection)
+        return $true
+    } catch { return $false }
+    finally { $client.Dispose() }
+}
+
 try {
     if (-not $BunPath) {
         $command = Get-Command bun -ErrorAction SilentlyContinue
@@ -105,6 +116,9 @@ try {
     if ($existingHealth -and ($existingHealth.service -ne 'omp-codex-web-shim' -or $existingHealth.upstreamOrigin -ne $UpstreamUrl)) {
         throw 'ShimPort is already used by a different shim. Choose a different -ShimPort.'
     }
+    if (-not $existingHealth -and (Test-ShimPortBusy $ShimPort)) {
+        throw "ShimPort $ShimPort is already occupied by another process. Close it or choose a different -ShimPort; no installation files changed."
+    }
     $snapshots = @()
     foreach ($change in $changes) {
         $exists = [IO.File]::Exists($change.path)
@@ -132,7 +146,7 @@ try {
         throw $writeError
     }
     Write-Output "OMP roles and provider configured: $modelsPath"
-    Write-Output 'default/vision/plan/task/web: GPT-5.6 Sol Web high; commit: Instant auto.'
+    Write-Output 'default/vision/plan/task/web: GPT-6 Sol Web high; commit: Instant auto.'
     Write-Output 'Other roles and compaction settings preserved. Restart OMP after setup.'
     $launcher = Join-Path $ShimDirectory 'start-shim.ps1'
     if ($existingHealth) {
@@ -154,12 +168,14 @@ try {
     try {
         $catalog = Invoke-RestMethod -Uri "$UpstreamUrl/v1/models" -TimeoutSec 3
         $ids = @($catalog.data | ForEach-Object { $_.id })
-        if ($ids -contains 'chatgpt-web/gpt-5.6-sol') { Write-Output 'Codex Web model API reachable; Sol is listed.' }
-        else { Write-Warning 'Codex Web responded but Sol is not listed. Check login and available models in Codex Web.' }
+        if (($ids -contains 'chatgpt-web/gpt-6-sol') -and ($ids -contains 'chatgpt-web/gpt-6-sol-instant')) {
+            Write-Output 'Codex Web model API reachable; GPT-6 Sol and Instant are listed.'
+        } else { Write-Warning 'Codex Web responded but GPT-6 Sol or Instant is not listed. Check Codex Web version, login and available models.' }
     } catch {
         Write-Warning "Codex Web API is not reachable at $UpstreamUrl. Start Codex Web and log in before using OMP; this script does not install Codex Web."
     }
-    if ($JudgeBaseUrl) { Write-Output 'Judge: 9router/oc/jev-1.13-free. Supply NINE_ROUTER_API_KEY if your router requires authentication.' }
+    Write-Output 'Judge: GPT-6 Sol Instant (Web).'
+    if ($JudgeBaseUrl) { Write-Output 'Legacy 9router provider configured; judge remains on GPT-6 Sol Instant.' }
 } catch {
     [Console]::Error.WriteLine("ERROR: $($_.Exception.Message)")
     exit 1

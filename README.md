@@ -188,7 +188,7 @@ changes used to prevent repeated replacement-agent termination.
 
 ### Windows: double-click installer
 
-1. Install OMP and Bun, then open Codex Web and sign in to ChatGPT.
+1. Install OMP, then open Codex Web and sign in to ChatGPT. Bun is installed automatically if it is missing.
 2. Download the [repository ZIP](https://github.com/thaiGO2003/omp-codex-web-stability/archive/refs/heads/main.zip) and **extract it**.
 3. Double-click **[install-and-run.bat](install-and-run.bat)** in the extracted folder. Python is not required. The window stays open so you can read the result.
 4. Accept the Windows administrator (UAC) prompt. Codex Web lives under `C:\Program Files\Codex Web GPT`, so the browser-helper fix and the logon task need elevation; `install-and-run.bat` re-launches itself elevated automatically. If you decline, nothing is installed.
@@ -207,6 +207,11 @@ or has an older bundle revision, BAT downloads the matching installer from this
 repository, checks its revision and PowerShell syntax, then saves a backup before
 replacing the old file. A failed download leaves the old file intact and stops
 installation. It prefers PowerShell 7 and falls back to Windows PowerShell.
+If Bun is missing, the installer downloads the official Bun PowerShell installer
+over HTTPS, runs it, checks `bun.exe`, then resumes setup automatically. An
+explicit `-BunPath` is always honored; a missing explicit path reports an error.
+The installer also exposes the new Bun directory to its PowerShell child steps
+immediately, without requiring a new terminal or Windows sign-in.
 
 The bundled **[install.ps1](install.ps1)** also works when downloaded alone. It
 installs the full compatibility shim with the SSE watchdog, configures OMP model
@@ -234,8 +239,9 @@ installation path, while 6.1.7 requires the runtime's `manifest.json` and both
 bundles. `-DryRun` leaves installation files unchanged and starts no
 shim. Existing shim processes are not interrupted; restart their window after
 active turns finish. Close/reopen Codex Web while idle and restart OMP to load
-the changes. Bun and a signed-in, running Codex Web are prerequisites; this
-bundle installs the bridge and fixes rather than those applications.
+the changes. `-DryRun` requires Bun to be available already and never downloads
+it. A signed-in, running Codex Web is still required; this bundle installs the
+bridge and fixes rather than Codex Web or OMP.
 
 The bundle does not configure a Windows memory guard. Running out of RAM can
 still interrupt a browser turn. PowerShell 7 integration tests run on Linux;
@@ -397,24 +403,31 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\setup-omp-codex-web.ps1
 ```
 
 It updates `%USERPROFILE%\.omp\agent\config.yml` and `models.yml`, backing up
-changed files. Default, vision, plan, task and web roles use GPT-5.6 Sol Web High;
-commit uses Sol Instant Auto. It preserves compaction settings and other roles
+changed files. Default, vision, plan, task and web roles use GPT-6 Sol Web High;
+commit and judge use GPT-6 Sol Instant Auto. It preserves compaction settings and other roles
 and providers. The shim is installed under
 `%USERPROFILE%\.local\share\codex-chatgpt-web-omp-shim` and starts in a separate
 PowerShell window. Keep that window open, then restart OMP.
 
 The connection is `OMP -> http://127.0.0.1:3007/v1 -> Codex Web :17841`.
+Running `start-shim.ps1` again while a compatible shim is already listening on
+the same port now reuses it and exits successfully. Concurrent launcher attempts
+are serialized with a Windows mutex. If another process owns that port, setup
+fails before writing configuration and reports the conflicting port. Existing
+OMP sessions and the running shim are never killed to solve this collision.
+Windows validation: `powershell -NoProfile -File .\tests\test_shim_single_instance.ps1`.
 Use `-UpstreamUrl "http://127.0.0.1:YOUR_PORT"` if Codex Web uses another port,
 `-ShimPort 17843` if the shim port is occupied, or `-AgentDirectory "C:\path\agent"`
 for a custom OMP profile. `PI_CODING_AGENT_DIR` is respected.
 `-DryRun` previews changes and `-NoStart` installs without opening the shim window.
 
-To also set the judge role to your running 9router instance, add
-`-JudgeBaseUrl "http://127.0.0.1:YOUR_ROUTER_PORT"`. Existing router authentication
-is retained; a new router provider uses `NINE_ROUTER_API_KEY` from your environment.
-Otherwise the judge role is left as configured.
+The judge role now always uses GPT-6 Sol Instant. The legacy option
+`-JudgeBaseUrl "http://127.0.0.1:YOUR_ROUTER_PORT"` still configures the 9router
+provider without assigning it as judge. Existing router authentication is retained;
+a new router provider uses `NINE_ROUTER_API_KEY` from your environment.
 
-The installer checks whether the Codex Web API lists Sol. A reachable model API
+The installer checks whether the Codex Web API lists GPT-6 Sol and Instant (requires
+Codex Web GPT 6.1.6 or newer). A reachable model API
 does not verify a complete browser turn. Runtime tests cover fresh installation,
 request forwarding, backups and rollback using PowerShell 7 on Linux; native
 Windows and a signed-in Windows ChatGPT session have not been tested here.

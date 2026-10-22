@@ -26,7 +26,12 @@ function frameDisposition(frame: string): "preamble" | "submitted_failure" | "fo
   if (value.type === "response.heartbeat") return "preamble";
   const error = value.type === "response.failed" ? value.response?.error
     : value.type === "error" ? value.error ?? value : undefined;
-  if (error?.code === "chatgpt_submitted_turn_failed"
+  // Only the verified mention-menu failure is known to happen before Send.
+  // Other connector_not_found errors might occur after an action was started.
+  const preSendConnectorFailure = error?.code === "connector_not_found"
+    && typeof error.message === "string"
+    && /ChatGPT connector menu did not open after \d+ complete mention trigger attempt\(s\)/.test(error.message);
+  if ((error?.code === "chatgpt_submitted_turn_failed" || preSendConnectorFailure)
     && (!Array.isArray(value.response?.output) || value.response.output.length === 0)) return "submitted_failure";
   return "forward";
 }
@@ -55,6 +60,7 @@ export function retrySubmittedTurnStream(source: ReadableStream<Uint8Array>, opt
   if (options.signal?.aborted) abort();
   else options.signal?.addEventListener("abort", abort, { once: true });
   let reader = source.getReader();
+  const encoder = new TextEncoder();
   let buffered: Uint8Array[] = [];
   let bufferedBytes = 0;
   let pending = "";
@@ -78,7 +84,7 @@ export function retrySubmittedTurnStream(source: ReadableStream<Uint8Array>, opt
         const value = JSON.parse(json);
         const error = value?.type === "response.failed" ? value.response?.error
           : value?.type === "error" ? value.error ?? value : undefined;
-        if (error?.code !== "chatgpt_submitted_turn_failed") return line;
+        if (error?.code !== "chatgpt_submitted_turn_failed" && error?.code !== "connector_not_found") return line;
         error.code = reason;
         error.message = message;
         error.retryable = false;
@@ -102,14 +108,22 @@ export function retrySubmittedTurnStream(source: ReadableStream<Uint8Array>, opt
       try {
         while (!cancelled) {
           if (stop.signal.aborted) throw stop.signal.reason ?? new DOMException("Cancelled", "AbortError");
-          const { done, value } = await reader.read();
+          const { done, value: chunk } = await reader.read();
           if (cancelled) return;
-          if (done) {
+          if (done && (forwarding || pending.trim())) {
             if (!forwarding && buffered.length) flush();
             detach();
             controller.close();
             return;
           }
+          // EOF after only a created event or heartbeats is not completion.
+          // A fully framed preamble can be retried once the old native owner
+          // has been retired; truncated frames remain untouched and un-replayed.
+          const value = done ? encoder.encode(`data: ${JSON.stringify({ type: "response.failed", response: {
+            status: "failed", output: [], error: { code: "chatgpt_submitted_turn_failed",
+              message: "Upstream SSE closed before a terminal response" },
+          } })}\n\n`) : chunk!;
+          if (done) log("submitted_retry_eof", { attempts: retries });
           if (forwarding) { controller.enqueue(value); return; }
           buffered.push(value);
           bufferedBytes += value.byteLength;
@@ -137,7 +151,7 @@ export function retrySubmittedTurnStream(source: ReadableStream<Uint8Array>, opt
             return;
           }
           let attempt = retries + 1;
-          log("submitted_retry_started", { attempt, errorCode: "chatgpt_submitted_turn_failed" });
+          log("submitted_retry_started", { attempt });
           await reader.cancel("Retiring failed submitted turn").catch(() => {});
           while (true) {
             try {

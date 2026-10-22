@@ -1,0 +1,6 @@
+[Unit]
+Description=Safely activate the patched Codex Web 6.1.12 daemon when idle
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/thaigo/omp-codex-web-stability/bin/reload-runtime-612.py --if-idle --stop-timer-on-success

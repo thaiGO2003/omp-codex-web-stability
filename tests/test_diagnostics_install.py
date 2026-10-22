@@ -14,7 +14,9 @@ spec.loader.exec_module(installer)
 
 class DiagnosticsInstallTests(unittest.TestCase):
     def original(self):
-        source = (ROOT / 'shim/server.ts').read_text()
+        # Exercise the historical installer against its original known layout.
+        # The live source has evolved beyond these exact legacy patch anchors.
+        source = (ROOT / 'tests/fixtures/shim-server-2026-10-20.ts').read_text()
         for p in reversed(installer.PATCHES):
             source = source.replace(p['new'], p['old'], 1)
         return source

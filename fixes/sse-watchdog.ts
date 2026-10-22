@@ -123,13 +123,13 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
         timer = setTimeout(() => {
           if (closed || terminal || recovering) return;
           console.warn("OMP Web semantic timeout", { timeoutMs, sawOutput, recoveries });
-          emit("semantic_timeout", { timeoutMs, recoveryEligible: !sawOutput && recoveries === 0 && Boolean(options.onRecover) });
+          emit("semantic_timeout", { timeoutMs, recoveryEligible: !sawOutput && Boolean(options.onRecover) });
           recovering = (async () => {
             // Revoke the old native turn before opening a replacement browser.
             const retired = await retire(options.onStall);
             await reader.cancel("ChatGPT Web semantic timeout").catch(() => {});
             if (closed) return;
-            if (retired && !terminal && !sawOutput && recoveries === 0 && options.onRecover) {
+            if (retired && !terminal && !sawOutput && options.onRecover) {
               recoveries++;
               cleanup = undefined;
               cleanupError = undefined;
@@ -167,7 +167,6 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
             const code = !retired || cleanupError ? reasonCode(cleanupError) ?? "chatgpt_web_cleanup_unconfirmed"
               : recoveryError ? reasonCode(recoveryError) ?? "chatgpt_web_recovery_connect_failed"
               : sawOutput ? "chatgpt_web_semantic_progress_stalled"
-              : recoveries > 0 ? "chatgpt_web_recovery_exhausted"
               : "chatgpt_web_recovery_context_incomplete";
             const message = !retired || cleanupError
               ? "ChatGPT Web made no semantic progress. Native turn cancellation was not confirmed; a task may still be running. Automatic replay paused to avoid duplicate tool calls. Check the ChatGPT tab and OMP shim diagnostics."
@@ -177,9 +176,7 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
                   : "ChatGPT Web stalled; the old turn was cancelled, but replacement could not start. Check the ChatGPT tab and OMP shim diagnostics before continuing."
                 : sawOutput
                   ? "ChatGPT Web stopped making semantic progress after sending output. The native turn was cancelled; automatic replay was disabled to avoid repeating tool calls. Continue from the existing OMP session."
-                  : recoveries > 0
-                    ? "ChatGPT Web made no semantic progress after one automatic recovery. The replacement turn was cancelled. Continue from the existing OMP session."
-                    : "ChatGPT Web stalled and the native turn was cancelled, but complete tool history was unavailable for safe replay. Continue from the existing OMP session.";
+                  : "ChatGPT Web stalled and the native turn was cancelled, but complete tool history was unavailable for safe replay. Continue from the existing OMP session.";
             emit("recovery_stopped", { errorCode: code });
             const failure = { type: "response.failed", sequence_number: sequence++, retryable: false, response: {
               id: responseId || "resp_omp_stalled", status: "failed", output: [],

@@ -343,20 +343,56 @@ the browser fixes to the new version.
 ```bash
 git clone https://github.com/thaiGO2003/omp-codex-web-stability.git
 cd omp-codex-web-stability
-./bin/apply.sh
+./install-and-run.sh          # full setup: OMP Web roles, shim, fixes, verification
 ```
 
-Preview only:
+`install-and-run.sh` is the Linux counterpart of `install-and-run.bat`: it runs
+`bin/setup-omp-codex-web.sh`, then `bin/apply.sh`, then `bin/check.sh`. Pass
+`--dry-run` to preview every change.
+
+**1. OMP Web setup (parity with the Windows installer)**
 
 ```bash
+./bin/setup-omp-codex-web.sh                  # Codex Web :17841 -> shim :3007
+./bin/setup-omp-codex-web.sh --dry-run        # list the files that would change
+./bin/setup-omp-codex-web.sh --no-start       # install only, do not start the service
+./bin/setup-omp-codex-web.sh --upstream-url http://127.0.0.1:19000 --shim-port 3107
+```
+
+It merges the 12 OMP model roles into `~/.omp/agent/config.yml`, writes
+`~/.omp/agent/models.yml` with the `codex-chatgpt-web` / `openai-codex` providers
+pointed at the shim, installs the shim sources into
+`~/.local/share/codex-chatgpt-web-omp-shim`, adds the
+`extensions/codex-chatgpt-web-compat.ts` extension, and creates
+`~/.config/systemd/user/codex-chatgpt-web-omp-shim.service`. Every changed file
+gets a `.pre-web-setup-<timestamp>.bak` backup and a failed write is rolled back.
+Options: `--agent-dir`, `--shim-dir`, `--judge-base-url`, `--bun-path`,
+`--no-systemd`. Unlike the older Linux notes, no pre-existing shim is required.
+
+Manage the shim:
+
+```bash
+systemctl --user status codex-chatgpt-web-omp-shim.service
+systemctl --user restart codex-chatgpt-web-omp-shim.service   # after active turns finish
+~/.local/share/codex-chatgpt-web-omp-shim/start-shim.sh       # foreground alternative
+curl -s http://127.0.0.1:3007/omp-shim-health
+```
+
+On a headless host run `loginctl enable-linger "$USER"` so the user service
+survives logout.
+
+**2. Stability fixes**
+
+```bash
+./bin/apply.sh            # compaction order + browser-helper Send/selector budget
 ./bin/apply.sh --dry-run
-```
-
-Check current state:
-
-```bash
 ./bin/check.sh
 ```
+
+Still Windows-only: the scheduled-task Codex Web watchdog
+(`bin/watch-codex-web.ps1`) and the Codex Web launcher auto-update. On Linux the
+shim and Codex Web are separate processes; restart Codex Web yourself after an
+update.
 
 ## Fix Send timeout after a Codex Web update
 
@@ -494,8 +530,8 @@ See [docs/recovery.md](docs/recovery.md) for a diagnostic checklist.
 - No credentials, cookies, session files, or browser profiles are copied into this repo.
 - The helper patch is version-sensitive and uses exact guarded replacements.
 - Each changed helper file gets a `.pre-stability-fix-<timestamp>.bak` backup.
-- The Linux script changes OMP configuration through its CLI. PowerShell parses
-  the YAML config with Bun and backs it up before writing. Changed YAML may be
+- Both platforms parse the YAML config with Bun before writing and back up every
+  changed file (`.pre-web-setup-<timestamp>.bak`). Changed YAML may be
   reformatted and comments removed; session history is not edited.
 
 To refresh the standalone Windows bundle after editing the source scripts:

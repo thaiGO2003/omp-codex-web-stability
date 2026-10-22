@@ -9,7 +9,7 @@ const encoder = new TextEncoder();
 const frame = (event: object) => encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
 
 test("actual shim HTTP path preserves full input on bounded silent replacement", async () => {
-  for (const scenario of ["complete", "complete_619", "missing_result", "unsupported_version", "invalid_ack"]) {
+  for (const scenario of ["complete", "complete_619", "transient_recovery", "missing_result", "unsupported_version", "invalid_ack"]) {
     const dir = await mkdtemp(join(tmpdir(), "omp-silent-http-"));
     const bodies: string[] = [];
     let interrupted = 0;
@@ -33,12 +33,14 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
         bodies.push(await req.text());
         const requestMetadata = JSON.parse(JSON.parse(bodies.at(-1)!).client_metadata["x-codex-turn-metadata"]);
         const headerMetadata = JSON.parse(req.headers.get("x-codex-turn-metadata")!);
-        if (bodies.length === 1) firstIdentity = { threadId: requestMetadata.thread_id, turnId: requestMetadata.turn_id };
+        if (bodies.length === 1 || scenario === "transient_recovery" && bodies.length === 2)
+          firstIdentity = { threadId: requestMetadata.thread_id, turnId: requestMetadata.turn_id };
         expect(headerMetadata.turn_id).toBe(requestMetadata.turn_id);
         expect(headerMetadata.thread_id).toBe(requestMetadata.thread_id);
         // Native 6.1.9 remembers cancelled identities; the old chat's MCP
         // session may be gone as well. Reusing either cannot recover.
         if (retiredThreads.has(requestMetadata.thread_id)) return new Response(null, { status: 499 });
+        if (scenario === "transient_recovery" && bodies.length === 2) return new Response("overloaded", { status: 503 });
         return new Response(new ReadableStream<Uint8Array>({ start(controller) {
           controller.enqueue(frame({ type: "response.created", response: { id: `resp_${bodies.length}`, status: "in_progress", output: [] } }));
           if (bodies.length === 1) first = controller;
@@ -60,8 +62,9 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
       source = source.replace(/from "\.\/([^"]+)"/g, (_match, name) => `from ${JSON.stringify(pathToFileURL(resolve("shim", name + ".ts")).href)}`);
       source = source.replace("Bun.serve({", "const fixtureServer = Bun.serve({");
       // Accelerate the canonical timer only in this isolated fixture.
-      source = source.replace("guardResponseStream(upstream.body!, {", "guardResponseStream(upstream.body!, { timeoutMs: 300,");
+      source = source.replace("guardResponseStream(source, {", "guardResponseStream(source, { timeoutMs: 300,");
       source = source.replace("setTimeout(() => connect.abort(), 20_000)", "setTimeout(() => connect.abort(), 100)");
+      if (scenario === "transient_recovery") source = source.replace("attempt === 1 ? 2_000 : attempt === 2 ? 5_000", "attempt === 1 ? 10 : attempt === 2 ? 10");
       source += '\nconsole.log("FIXTURE_PORT=" + fixtureServer.port);\n';
       await writeFile(join(dir, "server.ts"), source);
       child = Bun.spawn([process.execPath, join(dir, "server.ts")], {
@@ -97,11 +100,12 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
       });
       const response = await send();
       const output = await response.text();
-      expect(interrupted).toBe(scenario === "unsupported_version" ? 2 : 1);
-      const eligible = scenario === "complete" || scenario === "complete_619";
-      expect(bodies.length).toBe(eligible ? 2 : 1);
+      expect(interrupted).toBe(scenario === "unsupported_version" || scenario === "transient_recovery" ? 2 : 1);
+      const eligible = ["complete", "complete_619", "transient_recovery"].includes(scenario);
+      const recoveryIndex = scenario === "transient_recovery" ? 2 : 1;
+      expect(bodies.length).toBe(eligible ? recoveryIndex + 1 : 1);
       if (eligible) {
-        const firstBody = JSON.parse(bodies[0]), recoveredBody = JSON.parse(bodies[1]);
+        const firstBody = JSON.parse(bodies[0]), recoveredBody = JSON.parse(bodies[recoveryIndex]);
         const firstMetadata = JSON.parse(firstBody.client_metadata["x-codex-turn-metadata"]);
         const recoveredMetadata = JSON.parse(recoveredBody.client_metadata["x-codex-turn-metadata"]);
         expect(recoveredMetadata.thread_id).not.toBe(firstMetadata.thread_id);
@@ -121,18 +125,18 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
           return copy;
         };
         expect(withoutOwner(recoveredBody)).toEqual(withoutOwner(firstBody));
-        expect(JSON.parse(bodies[1]).input).toContainEqual({ type: "function_call_output", call_id: "call_done", output: "failed: exit 7" });
+        expect(JSON.parse(bodies[recoveryIndex]).input).toContainEqual({ type: "function_call_output", call_id: "call_done", output: "failed: exit 7" });
         expect(output).toContain("HTTP_RECOVERED");
         expect(output).not.toContain("chatgpt_web_recovery_stopped");
         const continuation = await send();
         expect(await continuation.text()).toContain("HTTP_RECOVERED");
-        const continuedMetadata = JSON.parse(JSON.parse(bodies[2]).client_metadata["x-codex-turn-metadata"]);
+        const continuedMetadata = JSON.parse(JSON.parse(bodies[recoveryIndex + 1]).client_metadata["x-codex-turn-metadata"]);
         expect(continuedMetadata).toEqual(recoveredMetadata);
         const nextTurn = await send({ ...requestBody, client_metadata: {
           "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread_fixture", turn_id: "turn_next" }),
         } });
         expect(await nextTurn.text()).toContain("HTTP_RECOVERED");
-        const nextMetadata = JSON.parse(JSON.parse(bodies[3]).client_metadata["x-codex-turn-metadata"]);
+        const nextMetadata = JSON.parse(JSON.parse(bodies[recoveryIndex + 2]).client_metadata["x-codex-turn-metadata"]);
         expect(nextMetadata.thread_id).toBe(recoveredMetadata.thread_id);
         expect(nextMetadata.turn_id).not.toBe(recoveredMetadata.turn_id);
       } else expect(output).toContain(scenario === "missing_result" ? "chatgpt_web_recovery_context_incomplete"
@@ -149,7 +153,8 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
       expect(requestRows.some(row => row.event === "recovery_connected")).toBe(eligible);
       if (eligible) {
         const owners = new Set(requestRows.filter(row => row.event === "upstream_headers").map(row => row.nativeThreadId));
-        expect(owners.size).toBe(2);
+        expect(owners.size).toBe(recoveryIndex + 1);
+        if (scenario === "transient_recovery") expect(requestRows.some(row => row.event === "recovery_connect_deferred")).toBe(true);
         expect(requestRows.filter(row => row.event === "stream_terminal").at(-1)?.eventType).toBe("response.completed");
       }
       if (scenario === "unsupported_version") expect(requestRows.find(row => row.event === "recovery_lifecycle")?.lifecycleVerified).toBe(false);

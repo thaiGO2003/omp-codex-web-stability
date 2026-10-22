@@ -24,6 +24,48 @@ function source(frames: string[], split = false, keepOpen = false) {
 }
 const failedSource = (crlf = false, split = false) => source([event(created, crlf), event(submittedFailure, crlf)], split, true);
 
+const connectorFailure = { type: "response.failed", response: { id: "resp_fixture", status: "failed", output: [],
+  error: { code: "connector_not_found", message: "ChatGPT connector menu did not open after 3 complete mention trigger attempt(s)" } } };
+
+test("retries a connector lookup failure before Send without losing the task history", async () => {
+  let attempts = 0;
+  const output = await new Response(retrySubmittedTurnStream(source([event(created), event(connectorFailure)]).input, {
+    delay: async () => {},
+    onRetry: async attempt => {
+      attempts = attempt;
+      if (attempt < 4) return source([event(created), event(connectorFailure)]).input;
+      return source([event(created), event({ type: "response.output_text.delta", delta: "CONNECTOR_RECOVERED" }), event(completed)]).input;
+    },
+  })).text();
+  expect(attempts).toBe(4);
+  expect(output).toContain("CONNECTOR_RECOVERED");
+  expect(output).not.toContain("connector_not_found");
+});
+
+test("blocks connector lookup retry after a tool event or without safe replay ownership", async () => {
+  let calls = 0;
+  const exposed = await new Response(retrySubmittedTurnStream(source([event(created),
+    event({ type: "response.output_item.added", item: { type: "function_call", call_id: "danger" } }),
+    event(connectorFailure)]).input, {
+    delay: async () => {}, onRetry: async () => { calls++; return failedSource().input; },
+  })).text();
+  expect(calls).toBe(0);
+  expect(exposed).toContain("connector_not_found");
+  const incomplete = await new Response(retrySubmittedTurnStream(source([event(created), event(connectorFailure)]).input, {})).text();
+  expect(incomplete).toContain("chatgpt_submitted_retry_context_incomplete");
+});
+
+test("does not replay unrelated connector_not_found failures", async () => {
+  let calls = 0;
+  const unsafe = { type: "response.failed", response: { id: "resp_fixture", status: "failed", output: [],
+    error: { code: "connector_not_found", message: "Connector catalog became unavailable after send" } } };
+  const output = await new Response(retrySubmittedTurnStream(source([event(created), event(unsafe)]).input, {
+    delay: async () => {}, onRetry: async () => { calls++; return failedSource().input; },
+  })).text();
+  expect(calls).toBe(0);
+  expect(output).toContain("Connector catalog became unavailable after send");
+});
+
 test("retries repeated submitted-turn failures until actual completion; hides retired preambles", async () => {
   const first = failedSource(true, true);
   let attempts = 0;
@@ -41,6 +83,32 @@ test("retries repeated submitted-turn failures until actual completion; hides re
   expect(output).toContain("response.completed");
   expect(output).not.toContain("chatgpt_submitted_turn_failed");
   expect((output.match(/event: response.created/g) ?? []).length).toBe(1);
+});
+
+test("recovers premature SSE EOF until a real completion event arrives", async () => {
+  let attempts = 0;
+  const output = await new Response(retrySubmittedTurnStream(source([event(created)]).input, {
+    delay: async () => {},
+    onRetry: async () => {
+      attempts++;
+      return attempts < 3 ? source([event(created)]).input
+        : source([event(created), event({ type: "response.output_text.delta", delta: "COMPLETE" }), event(completed)]).input;
+    },
+  })).text();
+  expect(attempts).toBe(3);
+  expect(output).toContain("COMPLETE");
+  expect(output).toContain("response.completed");
+  expect(output).not.toContain("Upstream SSE closed");
+});
+
+test("does not retry a truncated SSE frame with an unknown outcome", async () => {
+  let attempts = 0;
+  const output = await new Response(retrySubmittedTurnStream(source([event(created), "data: {incomplete"] ).input, {
+    delay: async () => {},
+    onRetry: async () => { attempts++; return failedSource().input; },
+  })).text();
+  expect(attempts).toBe(0);
+  expect(output).toContain("data: {incomplete");
 });
 
 test("transient HTTP and network failures keep the original submission buffered until recovery", async () => {

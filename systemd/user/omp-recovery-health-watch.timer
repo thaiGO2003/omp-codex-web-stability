@@ -1,0 +1,11 @@
+[Unit]
+Description=Monitor OMP / Codex Web recovery health every five minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=5min
+AccuracySec=30s
+Unit=omp-recovery-health-watch.service
+
+[Install]
+WantedBy=timers.target

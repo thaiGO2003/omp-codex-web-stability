@@ -7,7 +7,7 @@ export const diagnosticEvents = new Set([
   "shim_started", "request_received", "request_rewrite_failed", "local_response", "queue_wait", "queue_acquired",
   "upstream_headers", "upstream_error", "stream_started", "stream_progress", "stream_terminal", "stream_eof",
   "stream_error", "stream_cancelled", "semantic_timeout", "cleanup_started", "cleanup_completed", "cleanup_failed", "cleanup_retrying",
-  "recovery_started", "recovery_lifecycle", "recovery_connecting", "recovery_connected", "recovery_failed", "recovery_stopped", "request_finished",
+  "recovery_started", "recovery_lifecycle", "recovery_connecting", "recovery_connect_deferred", "recovery_connected", "recovery_failed", "recovery_stopped", "request_finished",
   "submitted_retry_started", "submitted_retry_deferred", "submitted_retry_resumed", "submitted_retry_failed", "submitted_retry_blocked",
 ]);
 const eventTypes = new Set([
@@ -39,7 +39,7 @@ const identityFields = new Set(["logicalThreadId", "logicalTurnId", "nativeThrea
 const consoleEvents = new Set([
   "shim_started", "request_received", "upstream_headers", "upstream_error", "stream_started",
   "stream_progress", "stream_terminal", "stream_error", "semantic_timeout", "request_finished",
-  "cleanup_failed", "cleanup_retrying", "recovery_started", "recovery_connected", "recovery_failed", "recovery_stopped",
+  "cleanup_failed", "cleanup_retrying", "recovery_started", "recovery_connect_deferred", "recovery_connected", "recovery_failed", "recovery_stopped",
   "submitted_retry_started", "submitted_retry_deferred", "submitted_retry_resumed", "submitted_retry_failed", "submitted_retry_blocked",
 ]);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

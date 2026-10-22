@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry Codex Web 6.1.12 safe reload until the daemon becomes idle
+
+[Timer]
+OnActiveSec=1min
+OnUnitInactiveSec=3min
+AccuracySec=20s
+Unit=omp-native-612-safe-reload.service
+
+[Install]
+WantedBy=timers.target

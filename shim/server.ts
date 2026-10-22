@@ -1,5 +1,21 @@
 import { isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
+
+// Native Codex Web authenticates with the local Codex CLI ChatGPT session.
+// OMP configured with auth: none sends the placeholder "Bearer N/A", so the
+// shim substitutes the current access token from ~/.codex/auth.json.
+const codexHome = process.env.CODEX_HOME || join(homedir(), ".codex");
+let cachedCodexToken: { value: string; at: number } | undefined;
+async function codexAccessToken(): Promise<string | undefined> {
+  try {
+    const data = await Bun.file(join(codexHome, "auth.json")).json();
+    const token = typeof data?.tokens?.access_token === "string" ? data.tokens.access_token : undefined;
+    if (token) cachedCodexToken = { value: token, at: Date.now() };
+    return token;
+  } catch {
+    return cachedCodexToken?.value;
+  }
+}
 import { guardResponseStream, hasCompleteRecoveryInput } from "./sse-watchdog";
 import { RecoveryIdentityStore } from "./sse-watchdog";
 import { record, addCodexEnvironment } from "./compatibility";
@@ -18,6 +34,12 @@ const diagnostics = new DiagnosticLog();
 // 6.1.11 retains /admin/interrupt-turn's scoped cancellation acknowledgement
 // and the native owner retirement logic present in 6.1.10.
 const verifiedRetirementVersions = new Set(["6.1.7", "6.1.9", "6.1.10", "6.1.11"]);
+// 6.1.12's stock interrupt endpoint acknowledges BEFORE asynchronous native
+// cleanup finishes. Only accept a patched runtime advertising settled cleanup.
+function retirementVerified(health: { version?: string; scoped_interrupt_settled?: boolean }): boolean {
+  return verifiedRetirementVersions.has(health.version ?? "")
+    || (health.version === "6.1.12" && health.scoped_interrupt_settled === true);
+}
 
 
 class NativeInterruptionError extends Error {
@@ -170,6 +192,11 @@ Bun.serve({
     log("request_received");
     headers.delete("host");
     headers.delete(cwdHeader);
+    const incomingAuth = headers.get("authorization") ?? "";
+    if (incomingAuth.length <= 7 || incomingAuth.startsWith("Bearer N/A")) {
+      const token = await codexAccessToken();
+      if (token) headers.set("authorization", `Bearer ${token}`);
+    }
 
     let body: BodyInit | undefined;
     if (req.method !== "GET" && req.method !== "HEAD") {
@@ -261,47 +288,91 @@ Bun.serve({
       try { eligibleHistory = hasCompleteRecoveryInput(JSON.parse(body)); }
       catch { /* The upstream response owns invalid requests. */ }
     }
-    const guardedBody = isOmpStream && threadId && turnId ? guardResponseStream(upstream.body!, {
+    let recoveryAttempt = 0;
+    const recoverSilently = eligibleHistory
+        ? async (signal: AbortSignal) => {
+          // A replacement may have reached native even when its HTTP response
+          // was lost. Retire that identity BEFORE any subsequent submission.
+          let maybeSubmitted = false;
+          for (let attempt = 1; ; attempt++) {
+            if (signal.aborted || req.signal.aborted) throw signal.reason ?? req.signal.reason;
+            try {
+              let health: Response;
+              try {
+                health = await fetch(new URL("/healthz", upstreamOrigin), {
+                  signal: AbortSignal.any([req.signal, signal, AbortSignal.timeout(5000)]),
+                });
+              } catch (error) {
+                if (signal.aborted || req.signal.aborted) throw error;
+                throw new TemporarySubmissionTransportError();
+              }
+              log("upstream_headers", { phase: "health", httpStatus: health.status });
+              if (health.status === 429 || health.status >= 500) {
+                await health.body?.cancel().catch(() => {});
+                throw new TemporarySubmissionTransportError(health.status);
+              }
+              const lifecycleVerified = health.ok && retirementVerified(await health.json());
+              log("recovery_lifecycle", { lifecycleVerified });
+              if (!lifecycleVerified) {
+                throw new NativeInterruptionError("chatgpt_web_native_unverified", "Silent recovery requires a verified Codex Web retirement lifecycle");
+              }
+              if (maybeSubmitted) {
+                await interrupt("recovery_connect_failure");
+                maybeSubmitted = false;
+              }
+              // The old identity is permanently cancelled by the native runtime.
+              // Fresh thread ownership also prevents reuse of its terminated MCP chat.
+              const owner = recoveryIdentities.rotate(logicalThreadId!, logicalTurnId!);
+              body = recoveryIdentities.rebind(body as string, headers, owner);
+              threadId = owner.threadId;
+              turnId = owner.turnId;
+              const connect = new AbortController();
+              const deadline = setTimeout(() => connect.abort(), 20_000);
+              log("recovery_connecting", { phase: "connect", attempt: ++recoveryAttempt });
+              let replacement: Response;
+              maybeSubmitted = true;
+              try {
+                replacement = await fetch(upstreamUrl, {
+                  method: req.method, headers, body, redirect: "manual",
+                  signal: AbortSignal.any([req.signal, signal, connect.signal]),
+                });
+              } catch (error) {
+                if (signal.aborted || req.signal.aborted) throw error;
+                throw new TemporarySubmissionTransportError();
+              } finally { clearTimeout(deadline); }
+              // The connection deadline ends at headers; generation keeps its semantic budget.
+              log("upstream_headers", { httpStatus: replacement.status, sse: Boolean(replacement.headers.get("content-type")?.includes("text/event-stream")), attempt: recoveryAttempt });
+              if (replacement.status === 429 || replacement.status >= 500) {
+                await replacement.body?.cancel().catch(() => {});
+                throw new TemporarySubmissionTransportError(replacement.status);
+              }
+              if (!replacement.ok || !replacement.body || !replacement.headers.get("content-type")?.includes("text/event-stream")) {
+                await replacement.body?.cancel();
+                throw new NativeInterruptionError("chatgpt_web_recovery_connect_failed", "Silent recovery could not obtain a valid SSE response", replacement.status);
+              }
+              return replacement.body;
+            } catch (error) {
+              if (!(error instanceof TemporarySubmissionTransportError) || signal.aborted || req.signal.aborted) throw error;
+              log("recovery_connect_deferred", { attempt, httpStatus: error.httpStatus });
+              const wait = attempt === 1 ? 2_000 : attempt === 2 ? 5_000 : Math.min(30_000, 10_000 * 2 ** Math.min(attempt - 3, 2));
+              await new Promise<void>((resolve, reject) => {
+                const combined = AbortSignal.any([req.signal, signal]);
+                const stop = () => { clearTimeout(timer); combined.removeEventListener("abort", stop); reject(combined.reason); };
+                const timer = setTimeout(() => { combined.removeEventListener("abort", stop); resolve(); }, wait);
+                if (combined.aborted) stop(); else combined.addEventListener("abort", stop, { once: true });
+              });
+            }
+          }
+        } : undefined;
+    // Submitted-turn replacements need the same repeated semantic-stall
+    // recovery as the original stream; every replacement gets fresh ownership.
+    const guardNativeStream = (source: ReadableStream<Uint8Array>) => guardResponseStream(source, {
       onDiagnostic: log,
       onStall: () => interrupt("stall"),
       onCancel: () => interrupt("cancel"),
-      onRecover: eligibleHistory
-        ? async signal => {
-          // This native version waits for the old owner's physical retirement.
-          const health = await fetch(new URL("/healthz", upstreamOrigin), {
-            signal: AbortSignal.any([req.signal, signal, AbortSignal.timeout(5000)]),
-          });
-          log("upstream_headers", { phase: "health", httpStatus: health.status });
-          const lifecycleVerified = health.ok && verifiedRetirementVersions.has((await health.json()).version);
-          log("recovery_lifecycle", { lifecycleVerified });
-          if (!lifecycleVerified) {
-            throw new NativeInterruptionError("chatgpt_web_native_unverified", "Silent recovery requires a verified Codex Web retirement lifecycle");
-          }
-          // The old identity is permanently cancelled by the native runtime.
-          // Fresh thread ownership also prevents reuse of its terminated MCP chat.
-          const owner = recoveryIdentities.rotate(logicalThreadId!, logicalTurnId!);
-          body = recoveryIdentities.rebind(body as string, headers, owner);
-          threadId = owner.threadId;
-          turnId = owner.turnId;
-          const connect = new AbortController();
-          const deadline = setTimeout(() => connect.abort(), 20_000);
-          log("recovery_connecting", { phase: "connect", attempt: 1 });
-          let replacement: Response;
-          try {
-            replacement = await fetch(upstreamUrl, {
-              method: req.method, headers, body, redirect: "manual",
-              signal: AbortSignal.any([req.signal, signal, connect.signal]),
-            });
-          } finally { clearTimeout(deadline); }
-          // The connection deadline ends at headers; generation keeps its semantic budget.
-          log("upstream_headers", { httpStatus: replacement.status, sse: Boolean(replacement.headers.get("content-type")?.includes("text/event-stream")), attempt: 1 });
-          if (!replacement.ok || !replacement.body || !replacement.headers.get("content-type")?.includes("text/event-stream")) {
-            await replacement.body?.cancel();
-            throw new NativeInterruptionError("chatgpt_web_recovery_connect_failed", "Silent recovery could not obtain a valid SSE response", replacement.status);
-          }
-          return replacement.body;
-        } : undefined,
-    }) : upstream.body;
+      onRecover: recoverSilently,
+    });
+    const guardedBody = isOmpStream && threadId && turnId ? guardNativeStream(upstream.body!) : upstream.body;
     const submittedRetry = isOmpStream && upstream.status === 200 && threadId && turnId && guardedBody
       ? retrySubmittedTurnStream(guardedBody, {
         signal: req.signal,
@@ -326,7 +397,7 @@ Bun.serve({
           if (!health.ok) {
             throw new NativeInterruptionError("chatgpt_submitted_retry_health_rejected", "Codex Web health check rejected automatic retry", health.status);
           }
-          if (!verifiedRetirementVersions.has((await health.json()).version)) {
+          if (!retirementVerified(await health.json())) {
             throw new NativeInterruptionError("chatgpt_web_native_unverified", "Submitted-turn recovery requires a verified native retirement lifecycle");
           }
           await interrupt("submitted_failure");
@@ -358,11 +429,7 @@ Bun.serve({
               ? "chatgpt_submitted_retry_http_rejected" : "chatgpt_submitted_retry_invalid_stream",
             "Submitted-turn replacement did not return 200 SSE", replacement.status);
           }
-          return guardResponseStream(replacement.body, {
-            onDiagnostic: log,
-            onStall: () => interrupt("stall"),
-            onCancel: () => interrupt("cancel"),
-          });
+          return guardNativeStream(replacement.body);
         } : undefined,
       }) : guardedBody;
     const responseBody = isOmpStream ? translateResponseStream(submittedRetry!) : submittedRetry;

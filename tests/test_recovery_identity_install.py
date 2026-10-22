@@ -14,7 +14,8 @@ spec.loader.exec_module(installer)
 
 class RecoveryIdentityInstallTests(unittest.TestCase):
     def original(self):
-        source = (ROOT / 'shim/server.ts').read_text()
+        # Use a pinned supported installer fixture, not the evolving live shim.
+        source = (ROOT / 'tests/fixtures/shim-server-2026-10-20.ts').read_text()
         for p in installer.PATCHES:
             source = source.replace(p['new'], p['old'], 1)
         return source
@@ -43,7 +44,7 @@ class RecoveryIdentityInstallTests(unittest.TestCase):
                 installer.patched_server(source)
 
     def test_upgrade_known_earlier_identity_patch(self):
-        current = (ROOT / 'shim/server.ts').read_text()
+        current = (ROOT / 'tests/fixtures/shim-server-2026-10-20.ts').read_text()
         previous = current
         for p in installer.UPGRADES:
             previous = previous.replace(p['new'], p['old'], 1)

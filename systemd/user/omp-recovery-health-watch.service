@@ -1,0 +1,6 @@
+[Unit]
+Description=Check OMP / Codex Web shim recovery health
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/omp-codex-web-stability/bin/monitor-recovery-health.py

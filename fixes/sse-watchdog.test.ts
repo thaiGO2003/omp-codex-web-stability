@@ -78,8 +78,29 @@ test("silent stall retires first, replaces once and preserves successful replace
   expect(text).not.toContain("chatgpt_web_recovery_stopped");
 });
 
-test("only one silent replacement; forwarded text, reasoning or tools prevent replay", async () => {
-  for (const event of [undefined,
+test("multiple silent stalls recover until output, while forwarded work prevents replay", async () => {
+  {
+    const f = fixture();
+    let replacements = 0;
+    let retired = 0;
+    const output = new Response(guardResponseStream(f.source, { timeoutMs: 25,
+      onStall: async () => { retired++; }, onCancel: async () => {},
+      onRecover: async () => {
+        replacements++;
+        const next = fixture();
+        if (replacements === 3) {
+          next.send({ type: "response.output_text.delta", delta: "DONE_AFTER_THREE_STALLS" });
+          next.send({ type: "response.completed", response: { status: "completed" } });
+          next.close();
+        }
+        return next.source;
+      },
+    })).text();
+    expect(await output).toContain("DONE_AFTER_THREE_STALLS");
+    expect(replacements).toBe(3);
+    expect(retired).toBe(3);
+  }
+  for (const event of [
     { type: "response.output_text.delta", delta: "partial" },
     { type: "response.reasoning_summary_text.delta", delta: "thinking" },
     { type: "response.output_item.added", item: { type: "function_call", call_id: "call_new" } },
@@ -92,9 +113,9 @@ test("only one silent replacement; forwarded text, reasoning or tools prevent re
       onRecover: async () => { replacements++; return fixture().source; },
     })).text();
     if (event) f.send(event);
-    expect(await output).toContain(event ? "chatgpt_web_semantic_progress_stalled" : "chatgpt_web_recovery_exhausted");
-    expect(replacements).toBe(event ? 0 : 1);
-    expect(retired).toBe(event ? 1 : 2);
+    expect(await output).toContain("chatgpt_web_semantic_progress_stalled");
+    expect(replacements).toBe(0);
+    expect(retired).toBe(1);
   }
 });
 
@@ -223,7 +244,7 @@ providerTest("actual OMP parser receives an explicit error instead of its own id
   }).result();
   expect(retired).toBe(1);
   expect(result.stopReason).toBe("error");
-  expect(result.errorMessage).toContain("ChatGPT Web made no semantic progress");
+  expect(result.errorMessage).toContain("ChatGPT Web stalled");
   expect(result.errorMessage).not.toContain("SSE stream stalled");
   const AIError = await import(join(modulesRoot, "@oh-my-pi/pi-ai/src/error/index.ts"));
   expect(AIError.retriable(AIError.classifyMessage(result))).toBe(false);

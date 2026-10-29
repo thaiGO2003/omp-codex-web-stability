@@ -29,19 +29,8 @@ const listenPort = Number(process.env.OMP_CODEX_WEB_SHIM_PORT || 3007);
 const upstreamOrigin = process.env.OMP_CODEX_WEB_UPSTREAM || "http://127.0.0.1:17841";
 const cwdHeader = "x-omp-cwd";
 const diagnostics = new DiagnosticLog();
-// Native releases cancelled browser owners and tombstones their thread/turn IDs.
-// Versions outside this verified set must not receive automatic re-submissions.
-// 6.1.11 retains /admin/interrupt-turn's scoped cancellation acknowledgement
-// and the native owner retirement logic present in 6.1.10.
-const verifiedRetirementVersions = new Set(["6.1.7", "6.1.9", "6.1.10", "6.1.11"]);
-// 6.1.12's stock interrupt endpoint acknowledges BEFORE asynchronous native
-// cleanup finishes. Only accept a patched runtime advertising settled cleanup.
-function retirementVerified(health: { version?: string; scoped_interrupt_settled?: boolean }): boolean {
-  return verifiedRetirementVersions.has(health.version ?? "")
-    || (health.version === "6.1.12" && health.scoped_interrupt_settled === true);
-}
-
-
+// Recovery is version-independent. Every replacement still requires complete
+// input history and a valid acknowledgement from the scoped interrupt endpoint.
 class NativeInterruptionError extends Error {
   constructor(readonly code: string, message: string, readonly httpStatus?: number) { super(message); this.name = "NativeInterruptionError"; }
 }
@@ -311,10 +300,9 @@ Bun.serve({
                 await health.body?.cancel().catch(() => {});
                 throw new TemporarySubmissionTransportError(health.status);
               }
-              const lifecycleVerified = health.ok && retirementVerified(await health.json());
-              log("recovery_lifecycle", { lifecycleVerified });
-              if (!lifecycleVerified) {
-                throw new NativeInterruptionError("chatgpt_web_native_unverified", "Silent recovery requires a verified Codex Web retirement lifecycle");
+              await health.body?.cancel().catch(() => {});
+              if (!health.ok) {
+                throw new NativeInterruptionError("chatgpt_web_recovery_connect_failed", "Codex Web health check rejected silent recovery", health.status);
               }
               if (maybeSubmitted) {
                 await interrupt("recovery_connect_failure");
@@ -379,8 +367,8 @@ Bun.serve({
         onDiagnostic: log,
         onRetry: eligibleHistory ? async (attempt, signal) => {
           // A failed submission is not evidence that its old browser has stopped.
-          // Require the verified retirement lifecycle before allocating a new
-          // native identity; old thread/turn IDs may be tombstoned after abort.
+          // Require scoped cancellation before allocating a new native identity;
+          // old thread/turn IDs may be tombstoned after abort.
           let health: Response;
           try {
             health = await fetch(new URL("/healthz", upstreamOrigin), {
@@ -397,9 +385,7 @@ Bun.serve({
           if (!health.ok) {
             throw new NativeInterruptionError("chatgpt_submitted_retry_health_rejected", "Codex Web health check rejected automatic retry", health.status);
           }
-          if (!retirementVerified(await health.json())) {
-            throw new NativeInterruptionError("chatgpt_web_native_unverified", "Submitted-turn recovery requires a verified native retirement lifecycle");
-          }
+          await health.body?.cancel().catch(() => {});
           await interrupt("submitted_failure");
           const owner = recoveryIdentities.rotate(logicalThreadId!, logicalTurnId!);
           body = recoveryIdentities.rebind(body as string, headers, owner);

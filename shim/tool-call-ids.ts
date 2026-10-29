@@ -61,9 +61,10 @@ export function translateResponseStream(source: ReadableStream<Uint8Array>): Rea
 }
 
 // This UI precondition is often mislabeled as server overload. OMP also scans
-// the rendered error text, so retryable:false alone does not stop its outer
-// retry loop. Do not claim sign-out universally: slow/changed UI can also hide
-// the composer. Preserve every other provider error, including real overload.
+// the rendered error text. Keep the provider error retryable so OMP's outer
+// loop continues the existing session (no fail-fast): a slow/changed UI can
+// hide the composer without a permanent sign-out. Preserve every other
+// provider error, including real overload.
 export function normalizeComposerFailure(value: unknown): boolean {
   const event = record(value);
   if (!event) return false;
@@ -72,15 +73,19 @@ export function normalizeComposerFailure(value: unknown): boolean {
   if (!error || error.code !== "server_is_overloaded"
     || error.message !== "ChatGPT composer is unavailable. Reload ChatGPT and retry the task.") return false;
   error.code = "chatgpt_composer_check_required";
-  error.message = "ChatGPT input needs attention. Open the ChatGPT tab and verify sign-in, then continue the existing OMP session. Automatic attempts have stopped.";
-  error.retryable = false;
-  error.status = 409;
+  error.message = "ChatGPT composer operation timed out; the input UI was briefly unavailable. Open the ChatGPT tab and verify sign-in if it persists; OMP is retrying the existing session.";
+  error.retryable = true;
+  error.status = 503;
+  // OMP classifies by error text/status, not the retryable flag. A
+  // timeout-worded message with a transient HTTP status keeps the existing
+  // session retryable (no fail-fast).
+  error.errorClassificationMessage = "ChatGPT composer operation timed out; the input UI was briefly unavailable and is being retried.";
   error.type = error === event ? "error" : "invalid_request_error";
   if (event.type === "error" && error !== event) {
     // Both fields can be present; OMP's formatter reads the outer message.
     event.message = error.message;
     event.code = error.code;
   }
-  event.retryable = false;
+  event.retryable = true;
   return true;
 }

@@ -9,7 +9,7 @@ const encoder = new TextEncoder();
 const frame = (event: object) => encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
 
 test("actual shim HTTP path preserves full input on bounded silent replacement", async () => {
-  for (const scenario of ["complete", "complete_619", "transient_recovery", "missing_result", "unsupported_version", "invalid_ack"]) {
+  for (const scenario of ["complete", "complete_619", "transient_recovery", "missing_result", "new_version", "invalid_ack"]) {
     const dir = await mkdtemp(join(tmpdir(), "omp-silent-http-"));
     const bodies: string[] = [];
     let interrupted = 0;
@@ -19,7 +19,7 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
     const native = Bun.serve({ hostname: "127.0.0.1", port: 0,
       async fetch(req) {
         const url = new URL(req.url);
-        if (url.pathname === "/healthz") return Response.json({ version: scenario === "unsupported_version" ? "6.1.8" : scenario === "complete_619" ? "6.1.9" : "6.1.7" });
+        if (url.pathname === "/healthz") return Response.json({ version: scenario === "new_version" ? "6.1.13" : scenario === "complete_619" ? "6.1.9" : "6.1.7" });
         if (url.pathname === "/admin/interrupt-turn") {
           expect(req.headers.get("authorization")).toBe("Bearer fixture-control");
           const metadata = await req.json();
@@ -100,8 +100,8 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
       });
       const response = await send();
       const output = await response.text();
-      expect(interrupted).toBe(scenario === "unsupported_version" || scenario === "transient_recovery" ? 2 : 1);
-      const eligible = ["complete", "complete_619", "transient_recovery"].includes(scenario);
+      expect(interrupted).toBe(scenario === "transient_recovery" ? 2 : 1);
+      const eligible = ["complete", "complete_619", "transient_recovery", "new_version"].includes(scenario);
       const recoveryIndex = scenario === "transient_recovery" ? 2 : 1;
       expect(bodies.length).toBe(eligible ? recoveryIndex + 1 : 1);
       if (eligible) {
@@ -140,7 +140,7 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
         expect(nextMetadata.thread_id).toBe(recoveredMetadata.thread_id);
         expect(nextMetadata.turn_id).not.toBe(recoveredMetadata.turn_id);
       } else expect(output).toContain(scenario === "missing_result" ? "chatgpt_web_recovery_context_incomplete"
-        : scenario === "unsupported_version" ? "chatgpt_web_native_unverified" : "chatgpt_web_interrupt_invalid_ack");
+        : "chatgpt_web_interrupt_invalid_ack");
       const health = await (await fetch(`http://127.0.0.1:${port}/omp-shim-health`)).json();
       expect(health.diagnostics.enabled).toBe(true);
       expect(health.diagnostics.failedWrites).toBe(0);
@@ -157,7 +157,6 @@ test("actual shim HTTP path preserves full input on bounded silent replacement",
         if (scenario === "transient_recovery") expect(requestRows.some(row => row.event === "recovery_connect_deferred")).toBe(true);
         expect(requestRows.filter(row => row.event === "stream_terminal").at(-1)?.eventType).toBe("response.completed");
       }
-      if (scenario === "unsupported_version") expect(requestRows.find(row => row.event === "recovery_lifecycle")?.lifecycleVerified).toBe(false);
       const diagnosticText = JSON.stringify(rows);
       for (const secret of ["fixture-control", "Continue the isolated fixture", "HTTP_RECOVERED", "failed: exit 7", "thread_fixture", dir]) {
         expect(diagnosticText).not.toContain(secret);

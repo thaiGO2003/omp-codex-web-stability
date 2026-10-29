@@ -244,10 +244,12 @@ providerTest("actual OMP parser receives an explicit error instead of its own id
   }).result();
   expect(retired).toBe(1);
   expect(result.stopReason).toBe("error");
-  expect(result.errorMessage).toContain("ChatGPT Web stalled");
+  expect(result.errorMessage).toContain("ChatGPT Web operation timed out");
   expect(result.errorMessage).not.toContain("SSE stream stalled");
   const AIError = await import(join(modulesRoot, "@oh-my-pi/pi-ai/src/error/index.ts"));
-  expect(AIError.retriable(AIError.classifyMessage(result))).toBe(false);
+  // A provider stall stays retryable: OMP's outer loop must continue the
+  // existing session instead of failing fast.
+  expect(AIError.retriable(AIError.classifyMessage(result))).toBe(true);
 });
 
 providerTest("actual OMP parser accepts replacement response identity within one request", async () => {
@@ -319,8 +321,11 @@ providerTest("exhausted browser recovery does not enter OMP's generic network re
   const model = { ...getBundledModels("openai-codex")[0], id: "chatgpt-web/gpt-5.6-sol", provider: "codex-chatgpt-web", baseUrl: "http://127.0.0.1:9999/v1" };
   const previous = "Codex response failed: ChatGPT conversation request failed in the browser (network_error). The prompt may already have reached ChatGPT. (code=chatgpt_fetch_failed, status=failed)";
   expect(AIError.retriable(AIError.classifyMessage({ api: model.api, errorMessage: previous }))).toBe(true);
-  const event = { type: "error", code: "chatgpt_recovery_stopped", status: 409, retryable: false,
-    message: "ChatGPT browser recovery stopped (attempt_budget_exhausted). Tool outcomes already received by OMP remain in its session. See local recovery diagnostics." };
+  // The shim now emits a transient-shape terminal (HTTP 503 + timeout-worded
+  // message) so OMP retries the existing session instead of stopping.
+  const event = { type: "error", code: "chatgpt_recovery_stopped", status: 503, retryable: true,
+    message: "ChatGPT browser recovery timed out (attempt_budget_exhausted). Tool outcomes already received by OMP remain in its session. See local recovery diagnostics.",
+    errorClassificationMessage: "ChatGPT Web operation timed out; the provider stream stalled and is being retried." };
   let requests = 0;
   const result = await streamOpenAICodexResponses(model, {
     messages: [{ role: "user", content: "Test", timestamp: Date.now() }],
@@ -331,7 +336,9 @@ providerTest("exhausted browser recovery does not enter OMP's generic network re
   expect(requests).toBe(1);
   expect(result.stopReason).toBe("error");
   expect(result.errorMessage).toContain("chatgpt_recovery_stopped");
-  expect(AIError.retriable(AIError.classifyMessage(result))).toBe(false);
+  // The shim reports recovery exhaustion, but OMP must still retry the
+  // existing session (no fail-fast) rather than stop the goal.
+  expect(AIError.retriable(AIError.classifyMessage(result))).toBe(true);
 });
 
 test("only the exact composer UI failure is normalized; real overload and tool content survive", () => {
@@ -344,7 +351,7 @@ test("only the exact composer UI failure is normalized; real overload and tool c
     expect(normalizeComposerFailure(event)).toBe(true);
     const error = event.type === "error" ? event.error ?? event : event.response!.error;
     expect(error.code).toBe("chatgpt_composer_check_required");
-    expect(error.retryable).toBe(false);
+    expect(error.retryable).toBe(true);
     expect(error.message).not.toContain("overload");
   }
   for (const event of [
@@ -359,7 +366,7 @@ test("only the exact composer UI failure is normalized; real overload and tool c
   }
 });
 
-providerTest("composer precondition stops OMP's outer overload retry loop after translation", async () => {
+providerTest("composer precondition stays retryable so OMP keeps retrying after translation", async () => {
   const { streamOpenAICodexResponses } = await import(providerPath);
   const AIError = await import(join(modulesRoot, "@oh-my-pi/pi-ai/src/error/index.ts"));
   const { getBundledModels } = await import(catalogPath);
@@ -379,6 +386,7 @@ providerTest("composer precondition stops OMP's outer overload retry loop after 
     expect(requests).toBe(1);
     expect(result.stopReason).toBe("error");
     expect(result.errorMessage).toContain("chatgpt_composer_check_required");
-    expect(AIError.retriable(AIError.classifyMessage(result))).toBe(false);
+    // A composer precondition is transient; OMP must keep retrying (no fail-fast).
+    expect(AIError.retriable(AIError.classifyMessage(result))).toBe(true);
   }
 });

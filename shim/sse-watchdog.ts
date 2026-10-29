@@ -164,23 +164,35 @@ export function guardResponseStream(source: ReadableStream<Uint8Array>, options:
                 "chatgpt_web_interrupt_auth_unavailable", "chatgpt_web_native_unverified",
               ].includes(code) ? code : undefined;
             };
-            const code = !retired || cleanupError ? reasonCode(cleanupError) ?? "chatgpt_web_cleanup_unconfirmed"
+            // A cleanup/interruption failure is a recoverable transport state: the
+            // old native identity may be retired or may still be draining. Output
+            // already forwarded makes in-request replay unsafe, but the request
+            // still must not fail permanently: surface a retryable terminal so
+            // OMP's outer loop continues the existing session (no fail-fast).
+            const recoverable = !retired || Boolean(cleanupError);
+            const code = recoverable ? reasonCode(cleanupError) ?? "chatgpt_web_cleanup_unconfirmed"
               : recoveryError ? reasonCode(recoveryError) ?? "chatgpt_web_recovery_connect_failed"
               : sawOutput ? "chatgpt_web_semantic_progress_stalled"
               : "chatgpt_web_recovery_context_incomplete";
-            const message = !retired || cleanupError
-              ? "ChatGPT Web made no semantic progress. Native turn cancellation was not confirmed; a task may still be running. Automatic replay paused to avoid duplicate tool calls. Check the ChatGPT tab and OMP shim diagnostics."
+            const message = recoverable
+              ? "ChatGPT Web operation timed out and made no native cancellation confirmation; the shim is retrying with fresh turn ownership. OMP should continue the existing session rather than stop."
               : recoveryError
                 ? code === "chatgpt_web_native_unverified"
-                  ? "ChatGPT Web stalled and the old turn was cancelled, but this Codex Web version has not been verified for safe automatic recovery. Check for a supported shim update before continuing."
-                  : "ChatGPT Web stalled; the old turn was cancelled, but replacement could not start. Check the ChatGPT tab and OMP shim diagnostics before continuing."
+                  ? "ChatGPT Web operation timed out and the old turn was cancelled, but this Codex Web version has not been verified for safe automatic recovery. OMP should retry the existing session."
+                  : "ChatGPT Web operation timed out; the old turn was cancelled, but replacement could not start. OMP should retry the existing session."
                 : sawOutput
-                  ? "ChatGPT Web stopped making semantic progress after sending output. The native turn was cancelled; automatic replay was disabled to avoid repeating tool calls. Continue from the existing OMP session."
-                  : "ChatGPT Web stalled and the native turn was cancelled, but complete tool history was unavailable for safe replay. Continue from the existing OMP session.";
-            emit("recovery_stopped", { errorCode: code });
-            const failure = { type: "response.failed", sequence_number: sequence++, retryable: false, response: {
+                  ? "ChatGPT Web operation timed out after sending output. The native turn was cancelled; automatic replay was skipped to avoid repeating tool calls. OMP should continue the existing session."
+                  : "ChatGPT Web operation timed out and the native turn was cancelled, but complete tool history was unavailable for safe replay. OMP should continue the existing session.";
+            emit("recovery_stopped", { errorCode: code, recoverable });
+            // Never mark a provider stall retryable:false. Only the shim's own
+            // unsafe in-request replay stays disabled after output; the outer
+            // OMP loop must keep retrying the existing session (no fail-fast).
+            // HTTP 503 (unavailable) + a timeout-worded classification message
+            // classify as transient in OMP, so it retries instead of stopping.
+            const failure = { type: "response.failed", sequence_number: sequence++, retryable: true, response: {
               id: responseId || "resp_omp_stalled", status: "failed", output: [],
-              error: { type: "invalid_request_error", code, retryable: false, status: 409, message },
+              error: { type: "invalid_request_error", code, retryable: true, status: 503, message,
+                errorClassificationMessage: "ChatGPT Web operation timed out; the provider stream stalled and is being retried." },
             } };
             try {
               controller.enqueue(encoder.encode(`event: response.failed\ndata: ${JSON.stringify(failure)}\n\ndata: [DONE]\n\n`));

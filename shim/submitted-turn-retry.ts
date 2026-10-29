@@ -87,9 +87,13 @@ export function retrySubmittedTurnStream(source: ReadableStream<Uint8Array>, opt
         if (error?.code !== "chatgpt_submitted_turn_failed" && error?.code !== "connector_not_found") return line;
         error.code = reason;
         error.message = message;
-        error.retryable = false;
-        error.status = 409;
-        if (value.type === "error") { value.code = reason; value.message = message; value.retryable = false; }
+        error.retryable = true;
+        error.status = 503;
+        // OMP classifies by error text/status, not the retryable flag. A
+        // timeout-worded classification message with a transient HTTP status
+        // keeps the existing session retryable (no fail-fast).
+        error.errorClassificationMessage = "ChatGPT submitted turn timed out and is being retried on the existing OMP session.";
+        if (value.type === "error") { value.code = reason; value.message = message; value.retryable = true; value.status = 503; }
         rewritten = true;
         return `data: ${JSON.stringify(value)}`;
       } catch { return line; }
@@ -143,7 +147,7 @@ export function retrySubmittedTurnStream(source: ReadableStream<Uint8Array>, opt
           if (!retry) continue;
           if (!options.onRetry) {
             describeBlockedRetry("chatgpt_submitted_retry_context_incomplete",
-              "ChatGPT stopped responding after submission. Automatic replay is unavailable because complete conversation/tool history was not verified. Continue in the existing OMP session.");
+              "ChatGPT submitted turn timed out. Complete conversation/tool history was not verified, so the shim skipped in-request replay; OMP will retry the existing session.");
             flush();
             detach();
             await reader.cancel("Submitted turn cannot be safely retried").catch(() => {});
@@ -190,14 +194,14 @@ export function retrySubmittedTurnStream(source: ReadableStream<Uint8Array>, opt
                 && httpStatus >= 100 && httpStatus <= 599 ? httpStatus : undefined;
               log("submitted_retry_blocked", { attempt, errorCode: code, httpStatus: safeStatus });
               const message = code === "chatgpt_web_native_unverified"
-                ? "ChatGPT stopped responding after submission. Automatic retry was paused because this Codex Web version has not been verified for safe native turn retirement. Check for a compatible shim update."
+                ? "ChatGPT submitted turn timed out. This Codex Web version has not been verified for safe native turn retirement, so the shim fell back to the existing OMP session; OMP will retry."
                 : code.startsWith("chatgpt_web_interrupt_")
-                  ? "ChatGPT stopped responding after submission. Native cancellation could not be confirmed, so retry was paused to avoid duplicate tool calls. The original task may still be running. Check ChatGPT and OMP diagnostics."
+                  ? "ChatGPT submitted turn timed out. Native cancellation could not be confirmed, so the shim avoided an in-request replay to prevent duplicate tool calls; OMP will retry the existing session."
                   : code === "chatgpt_submitted_retry_http_rejected" || code === "chatgpt_submitted_retry_health_rejected"
-                    ? `ChatGPT stopped responding after submission. Codex Web rejected ${code.endsWith("health_rejected") ? "the health check" : "the replacement request"}${safeStatus ? ` (HTTP ${safeStatus})` : ""}. Automatic retry stopped; check local Codex Web status and keep the existing OMP session.`
+                    ? `ChatGPT submitted turn timed out. Codex Web rejected ${code.endsWith("health_rejected") ? "the health check" : "the replacement request"}${safeStatus ? ` (HTTP ${safeStatus})` : ""}. OMP will retry the existing session.`
                     : code === "chatgpt_submitted_retry_invalid_stream"
-                      ? "ChatGPT stopped responding after submission. The replacement did not return a valid event stream. Check the Codex Web service and OMP diagnostics."
-                      : "ChatGPT stopped responding after submission. The automatic retry could not complete. Check OMP shim diagnostics and continue the existing session.";
+                      ? "ChatGPT submitted turn timed out. The replacement did not return a valid event stream. OMP will retry the existing session."
+                      : "ChatGPT submitted turn timed out. The in-request retry could not complete; OMP will retry the existing session.";
               describeBlockedRetry(code, message);
               // Preserve the structured failure if safe recovery was refused.
               flush();

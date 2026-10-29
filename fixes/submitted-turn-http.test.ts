@@ -16,7 +16,8 @@ test("real shim HTTP route retries structured submission failures with fresh own
     ["settled_612", "6.1.12"],
     ["invalid_ack", "6.1.10"],
     ["missing_result", "6.1.10"],
-    ["unsupported_version", "6.1.12"],
+    ["new_version", "6.1.13"],
+    ["future_version", "99.0.0"],
     ["transient_http", "6.1.10"],
     ["transient_health", "6.1.10"],
     ["permanent_http", "6.1.10"],
@@ -119,7 +120,7 @@ test("real shim HTTP route retries structured submission failures with fresh own
       });
       expect(response.status).toBe(200);
       const result = await response.text();
-      if (["repeated", "stall_after_submit", "settled_612", "transient_http", "transient_health", "slow_interrupt"].includes(scenario)) {
+      if (["repeated", "stall_after_submit", "settled_612", "new_version", "future_version", "transient_http", "transient_health", "slow_interrupt"].includes(scenario)) {
         expect(inputs).toHaveLength(scenario === "transient_http" ? 4 : scenario === "repeated" || scenario === "stall_after_submit" ? 3 : 2);
         expect(interrupted).toHaveLength(scenario === "transient_http" ? 3 : scenario === "repeated" || scenario === "stall_after_submit" || scenario === "slow_interrupt" ? 2 : 1);
         expect(result).toContain("FINISHED_AFTER_RETRY");
@@ -140,7 +141,7 @@ test("real shim HTTP route retries structured submission failures with fresh own
         expect(interrupted).toHaveLength(scenario === "invalid_ack" || scenario === "permanent_http" ? 1 : 0);
         expect(result).toContain(scenario === "invalid_ack" ? "chatgpt_web_interrupt_invalid_ack"
           : scenario === "missing_result" ? "chatgpt_submitted_retry_context_incomplete"
-          : scenario === "unsupported_version" ? "chatgpt_web_native_unverified" : "chatgpt_submitted_retry_http_rejected");
+          : "chatgpt_submitted_retry_http_rejected");
         if (scenario === "permanent_http") expect(result).toContain("HTTP 403");
         expect(result).not.toContain("chatgpt_submitted_turn_failed");
       }

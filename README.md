@@ -515,6 +515,29 @@ does not verify a complete browser turn. Runtime tests cover fresh installation,
 request forwarding, backups and rollback using PowerShell 7 on Linux; native
 Windows and a signed-in Windows ChatGPT session have not been tested here.
 
+## Use the same shim from Codex CLI
+
+The shim also accepts `codex` / `codex exec` directly. Codex CLI posts to `/v1/responses` with a
+`zstd` body and keeps turn ownership in `x-codex-turn-metadata`, so the shim now decodes those
+bodies, adopts the CLI's thread/turn ids, and applies the same stall watchdog and silent
+replacement as the OMP path. Point the CLI at the shim without changing anything else:
+
+```toml
+# ~/.codex/config.toml
+model = "chatgpt-web/gpt-6-sol"
+openai_base_url = "http://127.0.0.1:3007/v1"
+```
+
+Or override one invocation:
+
+```powershell
+codex exec -c 'openai_base_url="http://127.0.0.1:3007/v1"' "hello"
+```
+
+`shim.jsonl` records `client: "codex-cli"`, the decoded `encoding` and guarded stream events.
+WebSocket prewarm is not proxied, so the CLI falls back to HTTP SSE after one reconnect line.
+See [Codex CLI through the shim](docs/codex-cli.md).
+
 ## Recover an already bloated OMP session
 
 If the current session is already over its context window, changing future compaction settings cannot shrink the bad summary that is already in history.

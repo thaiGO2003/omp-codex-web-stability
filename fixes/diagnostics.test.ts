@@ -66,6 +66,10 @@ test("rotation bounds disk usage, restricts permissions and logging failures are
     expect(() => broken.log("shim_started")).not.toThrow();
     expect(broken.status().failedWrites).toBe(1);
     expect(diagnosticFields({ elapsedMs: Infinity, bytes: -1, prompt: "secret" })).toEqual({});
+    expect(diagnosticFields({ client: "codex-cli", encoding: "zstd", chars: 1200 })).toEqual({
+      client: "codex-cli", encoding: "zstd", chars: 1200,
+    });
+    expect(diagnosticFields({ client: "someone", encoding: "rot13" })).toEqual({});
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

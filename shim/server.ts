@@ -23,6 +23,7 @@ import { taskLabelResponse } from "./task-label";
 import { translateToolCallIds, translateResponseStream } from "./tool-call-ids";
 import { DiagnosticLog, errorFields } from "./diagnostics";
 import { retrySubmittedTurnStream, TemporarySubmissionTransportError } from "./submitted-turn-retry";
+import { attachTurnMetadata, decodeJsonRequestBody, turnIdentity } from "./request-identity";
 
 const listenHost = "127.0.0.1";
 const listenPort = Number(process.env.OMP_CODEX_WEB_SHIM_PORT || 3007);
@@ -150,14 +151,23 @@ Bun.serve({
       return Response.json({ service: "omp-codex-web-shim", upstreamOrigin, listenPort, diagnostics: diagnostics.status() });
     }
     let pathname = incoming.pathname;
+    const route = incoming.pathname;
 
     if (pathname === "/v1/codex/responses") pathname = "/v1/responses";
     if (pathname === "/v1/codex/responses/compact") pathname = "/v1/responses/compact";
+
+    // Both OMP and Codex CLI reach the same native Responses bridge. They differ only in how they
+    // carry ownership: OMP sends `x-omp-cwd` plus body metadata, Codex CLI sends headers.
+    const responsesPath = route === "/v1/codex/responses" || route === "/v1/responses";
+    const compactionPath = route === "/v1/codex/responses/compact" || route === "/v1/responses/compact";
+    const ompPath = route.startsWith("/v1/codex/");
 
     const upstreamUrl = new URL(pathname + incoming.search, upstreamOrigin);
     const headers = new Headers(req.headers);
     const requestCwd = headers.get(cwdHeader)?.trim();
     const headerTurnMetadata = headers.get("x-codex-turn-metadata") ?? undefined;
+    const clientKind = headers.get("originator")?.startsWith("codex_exec") || headers.get("originator")?.includes("codex_cli")
+      ? "codex-cli" : ompPath ? "omp" : "http";
     let threadId = threadIdFromMetadata(headerTurnMetadata);
     let turnId: string | undefined;
     const requestId = crypto.randomUUID();
@@ -178,7 +188,7 @@ Bun.serve({
         log("cleanup_completed", { phase, cancelledHttpTurns: ack?.cancelled_http_turns, cancelledBrowserTurns: ack?.cancelled_browser_turns });
       } catch (error) { log("cleanup_failed", { phase, ...errorFields(error) }); throw error; }
     };
-    log("request_received");
+    log("request_received", { client: clientKind });
     headers.delete("host");
     headers.delete(cwdHeader);
     const incomingAuth = headers.get("authorization") ?? "";
@@ -188,50 +198,75 @@ Bun.serve({
     }
 
     let body: BodyInit | undefined;
+    let jsonText: string | undefined;
     if (req.method !== "GET" && req.method !== "HEAD") {
       const bytes = new Uint8Array(await req.arrayBuffer().catch(error => { log("upstream_error", errorFields(error)); finish("error"); throw error; }));
       body = bytes;
-      if (incoming.pathname === "/v1/codex/responses"
-        && headers.get("content-type")?.includes("application/json")) {
+      const contentEncoding = headers.get("content-encoding");
+      if ((responsesPath || compactionPath) && headers.get("content-type")?.includes("application/json")) {
+        // Codex CLI compresses this body. Upstream accepts plain JSON, and only a readable body can
+        // be inspected, rebound for a silent retry, or replayed after a transport failure.
+        const decoded = decodeJsonRequestBody(bytes, contentEncoding);
+        if (decoded) {
+          body = decoded;
+          jsonText = decoded;
+          headers.delete("content-encoding");
+          headers.delete("content-length");
+          log("request_decoded", { encoding: contentEncoding ?? "identity", chars: decoded.length });
+        }
+      }
+      if (responsesPath && jsonText !== undefined) {
         try {
-          const parsed = record(JSON.parse(new TextDecoder().decode(bytes)));
-          const labelResponse = parsed && taskLabelResponse(parsed);
-          if (labelResponse) {
-            log("local_response");
-            finish("local");
-            return labelResponse;
-          }
-          const sessionCwd = typeof parsed?.__omp_cwd === "string" && isAbsolute(parsed.__omp_cwd)
-            ? parsed.__omp_cwd : requestCwd;
-          if (parsed) delete parsed.__omp_cwd;
-          if (parsed) translateToolCallIds(parsed, "to-web");
-          const rewrittenTurnMetadata = parsed && sessionCwd
-            ? addCodexEnvironment(parsed, sessionCwd, headerTurnMetadata)
-            : undefined;
-          const environmentAdded = Boolean(rewrittenTurnMetadata);
-          if (parsed && environmentAdded) {
-            body = JSON.stringify(parsed);
-            // Keep the header projection small; the tool registry belongs in the body.
-            const metadata = JSON.parse(rewrittenTurnMetadata!);
-            if (typeof metadata.turn_id === "string") turnId = metadata.turn_id;
-            if (typeof metadata.thread_id === "string" && metadata.thread_id) threadId = metadata.thread_id;
-            const { tool_namespaces_info: _tools, ...headerMetadata } = metadata;
-            headers.set("x-codex-turn-metadata", JSON.stringify(headerMetadata).replace(
-              /[\x7f-\uffff]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
-            ));
+          const parsed = record(JSON.parse(jsonText));
+          if (parsed) {
+            const metadata = attachTurnMetadata(parsed, headerTurnMetadata);
+            if (ompPath) {
+              const labelResponse = taskLabelResponse(parsed);
+              if (labelResponse) {
+                log("local_response");
+                finish("local");
+                return labelResponse;
+              }
+              const sessionCwd = typeof parsed.__omp_cwd === "string" && isAbsolute(parsed.__omp_cwd)
+                ? parsed.__omp_cwd : requestCwd;
+              delete parsed.__omp_cwd;
+              translateToolCallIds(parsed, "to-web");
+              const rewrittenTurnMetadata = sessionCwd
+                ? addCodexEnvironment(parsed, sessionCwd, headerTurnMetadata)
+                : undefined;
+              if (rewrittenTurnMetadata) {
+                jsonText = JSON.stringify(parsed);
+                body = jsonText;
+                // Keep the header projection small; the tool registry belongs in the body.
+                const headerMetadata = JSON.parse(rewrittenTurnMetadata);
+                if (typeof headerMetadata.turn_id === "string") turnId = headerMetadata.turn_id;
+                if (typeof headerMetadata.thread_id === "string" && headerMetadata.thread_id) threadId = headerMetadata.thread_id;
+                const { tool_namespaces_info: _tools, ...headerOnly } = headerMetadata;
+                headers.set("x-codex-turn-metadata", JSON.stringify(headerOnly).replace(
+                  /[\x7f-\uffff]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
+                ));
+              }
+            } else if (metadata) {
+              // Codex CLI keeps its turn metadata in a header. Mirror it into the body so recovery
+              // can rebind the same exact turn identity it already presented.
+              jsonText = JSON.stringify(parsed);
+              body = jsonText;
+            }
+            const identity = turnIdentity(metadata);
+            if (identity.threadId) threadId = identity.threadId;
+            if (identity.turnId) turnId = identity.turnId;
             logLogicalThreadId = threadId;
             logLogicalTurnId = turnId;
             headers.delete("content-length");
           }
         } catch (error) {
           log("request_rewrite_failed", errorFields(error));
-          // Forward the original body unchanged; upstream will return the real protocol error.
+          // Forward the decoded body unchanged; upstream will return the real protocol error.
         }
       }
     }
 
-    const shouldSerialize = Boolean(threadId)
-      && (incoming.pathname === "/v1/codex/responses" || incoming.pathname === "/v1/codex/responses/compact");
+    const shouldSerialize = Boolean(threadId) && (responsesPath || compactionPath);
     const queueStartedAt = Date.now();
     const queued = Boolean(shouldSerialize && threadTails.has(threadId!));
     if (queued) log("queue_wait", { queued });
@@ -267,14 +302,14 @@ Bun.serve({
       throw error;
     }
 
-    const isOmpStream = incoming.pathname === "/v1/codex/responses"
+    const isGuardedStream = responsesPath
       && upstream.headers.get("content-type")?.includes("text/event-stream") && upstream.body;
-    log("upstream_headers", { httpStatus: upstream.status, sse: Boolean(isOmpStream) });
+    log("upstream_headers", { httpStatus: upstream.status, sse: Boolean(isGuardedStream) });
     const responseHeaders = new Headers(upstream.headers);
-    if (isOmpStream) responseHeaders.delete("content-length");
+    if (isGuardedStream) responseHeaders.delete("content-length");
     let eligibleHistory = false;
-    if (isOmpStream && typeof body === "string") {
-      try { eligibleHistory = hasCompleteRecoveryInput(JSON.parse(body)); }
+    if (isGuardedStream && jsonText !== undefined) {
+      try { eligibleHistory = hasCompleteRecoveryInput(JSON.parse(jsonText)); }
       catch { /* The upstream response owns invalid requests. */ }
     }
     let recoveryAttempt = 0;
@@ -360,8 +395,8 @@ Bun.serve({
       onCancel: () => interrupt("cancel"),
       onRecover: recoverSilently,
     });
-    const guardedBody = isOmpStream && threadId && turnId ? guardNativeStream(upstream.body!) : upstream.body;
-    const submittedRetry = isOmpStream && upstream.status === 200 && threadId && turnId && guardedBody
+    const guardedBody = isGuardedStream && threadId && turnId ? guardNativeStream(upstream.body!) : upstream.body;
+    const submittedRetry = isGuardedStream && upstream.status === 200 && threadId && turnId && guardedBody
       ? retrySubmittedTurnStream(guardedBody, {
         signal: req.signal,
         onDiagnostic: log,
@@ -418,7 +453,9 @@ Bun.serve({
           return guardNativeStream(replacement.body);
         } : undefined,
       }) : guardedBody;
-    const responseBody = isOmpStream ? translateResponseStream(submittedRetry!) : submittedRetry;
+    // Tool-call id translation belongs to the OMP client contract only; Codex CLI reads the native
+    // ids it sent and must keep them verbatim.
+    const responseBody = ompPath && isGuardedStream ? translateResponseStream(submittedRetry!) : submittedRetry;
     const serializedBody = responseBody
       ? releaseWhenDone(responseBody, releaseThread ?? (() => {}), finish)
       : responseBody;

@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 export const diagnosticEvents = new Set([
-  "shim_started", "request_received", "request_rewrite_failed", "local_response", "queue_wait", "queue_acquired",
+  "shim_started", "request_received", "request_decoded", "request_rewrite_failed", "local_response", "queue_wait", "queue_acquired",
   "upstream_headers", "upstream_error", "stream_started", "stream_progress", "stream_terminal", "stream_eof",
   "stream_error", "stream_cancelled", "semantic_timeout", "cleanup_started", "cleanup_completed", "cleanup_failed", "cleanup_retrying",
   "recovery_started", "recovery_lifecycle", "recovery_connecting", "recovery_connect_deferred", "recovery_connected", "recovery_failed", "recovery_stopped", "request_finished",
@@ -30,9 +30,13 @@ const errorCodes = new Set([
 ]);
 const numericFields = new Set([
   "elapsedMs", "queueMs", "timeoutMs", "idleMs", "events", "bytes", "recoveries", "httpStatus", "inputItems",
-  "cancelledHttpTurns", "cancelledBrowserTurns", "attempt",
+  "cancelledHttpTurns", "cancelledBrowserTurns", "attempt", "chars",
 ]);
 const booleanFields = new Set(["sawOutput", "terminal", "recoveryEligible", "lifecycleVerified", "queued", "sse"]);
+const encodedFields = new Map<string, Set<string>>([
+  ["client", new Set(["omp", "codex-cli", "http"])],
+  ["encoding", new Set(["identity", "zstd", "gzip", "deflate", "br"])],
+]);
 const identityFields = new Set(["logicalThreadId", "logicalTurnId", "nativeThreadId", "nativeTurnId", "responseId"]);
 // Mirror state transitions and occasional progress to the visible PowerShell
 // window. The same allowlisted fields used on disk prevent prompt/tool leaks.
@@ -51,6 +55,7 @@ export function diagnosticFields(fields: Record<string, unknown>, alreadyHashed 
   for (const [key, value] of Object.entries(fields)) {
     if (numericFields.has(key) && typeof value === "number" && Number.isFinite(value) && value >= 0) safe[key] = Math.round(value);
     else if (booleanFields.has(key) && typeof value === "boolean") safe[key] = value;
+    else if (encodedFields.get(key)?.has(String(value))) safe[key] = value;
     else if (identityFields.has(key) && typeof value === "string" && value) {
       if (!alreadyHashed) safe[key] = createHash("sha256").update(value).digest("hex").slice(0, 16);
       else if (/^[a-f0-9]{16}$/.test(value)) safe[key] = value;

@@ -25,8 +25,30 @@ function Test-LocalPortBusy {
 
 function Test-CompatibleShim {
     param($Health)
-    return ($Health -and $Health.service -eq 'omp-codex-web-shim' -and
-        $Health.upstreamOrigin -eq $upstream)
+    # A foreign service can answer on the port with a non-shim body. Strict mode turns a missing
+    # property into a terminating error, so inspect the shape before reading it.
+    if ($Health -isnot [System.Management.Automation.PSCustomObject]) { return $false }
+    $properties = @($Health.PSObject.Properties.Name)
+    if ($properties -notcontains 'service' -or $properties -notcontains 'upstreamOrigin') { return $false }
+    return ($Health.service -eq 'omp-codex-web-shim' -and $Health.upstreamOrigin -eq $upstream)
+}
+
+# A frozen shim still owns its listening socket while refusing connections. Report the exact
+# process so the user can close that window instead of guessing which port is stuck.
+function Get-PortOwnerDescription {
+    param([int]$Port)
+    try {
+        $owners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop |
+            ForEach-Object { [int]$_.OwningProcess } | Sort-Object -Unique)
+        $parts = @(foreach ($owner in $owners) {
+            $process = Get-Process -Id $owner -ErrorAction SilentlyContinue
+            if ($process) { "PID $owner ($($process.ProcessName))" } else { "PID $owner" }
+        })
+        if ($parts.Count -gt 0) { return ($parts -join ', ') }
+    } catch {
+        # Get-NetTCPConnection may be unavailable; the caller still gets a useful message.
+    }
+    return 'an unidentified process'
 }
 
 # Hold this mutex for the lifetime of the Bun child to serialize launchers per port.
@@ -48,9 +70,9 @@ try {
         if (Test-CompatibleShim $health) {
             Write-Host "OMP shim already running at $origin; no second process started."
         } elseif ($health) {
-            throw "Port $port belongs to another shim/service or upstream. Choose a different -ShimPort."
+            throw "Port $port belongs to another shim/service or upstream (owner: $(Get-PortOwnerDescription -Port $port)). Choose a different -ShimPort."
         } elseif (Test-LocalPortBusy) {
-            throw "Port $port is occupied by a process that does not respond as the OMP shim. Close that process or use a different -ShimPort."
+            throw "Port $port is occupied by $(Get-PortOwnerDescription -Port $port), which does not respond as the OMP shim. Close that process or its window, or use a different -ShimPort."
         } else {
             if (-not [IO.File]::Exists([string]$settings.bunPath)) {
                 throw "Bun not found at the configured path: $($settings.bunPath)"

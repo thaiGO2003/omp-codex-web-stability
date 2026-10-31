@@ -49,6 +49,20 @@ port_busy() {
   (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null
 }
 
+# A frozen shim still owns its listening socket while refusing connections. Name the owner so the
+# user can stop that process instead of guessing which port is stuck.
+port_owner() {
+  local owner=""
+  if command -v ss >/dev/null 2>&1; then
+    owner="$(ss -ltnp "sport = :$port" 2>/dev/null | grep -o '"[^"]*",pid=[0-9]*' |
+      sed 's/"//g; s/,pid=/ (PID /; s/$/)/' | paste -sd ', ' -)"
+  fi
+  if [[ -z "$owner" ]] && command -v lsof >/dev/null 2>&1; then
+    owner="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 { printf "%s (PID %s) ", $1, $2 }' | sed 's/ $//')"
+  fi
+  printf '%s' "${owner:-an unidentified process}"
+}
+
 exec 9>"$here/.shim-launcher.lock"
 if ! flock -n 9; then
   compatible_health "$health" || die "Another shim launcher owns port $port but the health endpoint is not compatible. Check it before retrying."
@@ -57,13 +71,13 @@ if ! flock -n 9; then
 fi
 
 if [[ -n "$health" ]]; then
-  compatible_health "$health" || die "Port $port belongs to another shim/service or upstream. Choose a different shim port."
+  compatible_health "$health" || die "Port $port belongs to another shim/service or upstream (owner: $(port_owner)). Choose a different shim port."
   echo "OMP shim already running at $origin; no second process started."
   exit 0
 fi
 
 if port_busy; then
-  die "Port $port is occupied by a process that does not respond as the OMP shim. Close that process or use a different shim port."
+  die "Port $port is occupied by $(port_owner), which does not respond as the OMP shim. Stop that process or use a different shim port."
 fi
 
 [[ -x "$bun" ]] || die "Bun not found at the configured path: $bun"

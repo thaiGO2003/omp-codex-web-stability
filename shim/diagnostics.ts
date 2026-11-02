@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 export const diagnosticEvents = new Set([
-  "shim_started", "request_received", "request_decoded", "request_rewrite_failed", "local_response", "queue_wait", "queue_acquired",
+  "shim_started", "request_received", "request_decoded", "request_owned", "request_rewrite_failed", "local_response", "queue_wait", "queue_acquired",
   "upstream_headers", "upstream_error", "stream_started", "stream_progress", "stream_terminal", "stream_eof",
   "stream_error", "stream_cancelled", "semantic_timeout", "cleanup_started", "cleanup_completed", "cleanup_failed", "cleanup_retrying",
   "recovery_started", "recovery_lifecycle", "recovery_connecting", "recovery_connect_deferred", "recovery_connected", "recovery_failed", "recovery_stopped", "request_finished",
@@ -34,7 +34,7 @@ const numericFields = new Set([
 ]);
 const booleanFields = new Set(["sawOutput", "terminal", "recoveryEligible", "lifecycleVerified", "queued", "sse"]);
 const encodedFields = new Map<string, Set<string>>([
-  ["client", new Set(["omp", "codex-cli", "http"])],
+  ["client", new Set(["omp", "pi", "codex-cli", "http"])],
   ["encoding", new Set(["identity", "zstd", "gzip", "deflate", "br"])],
 ]);
 const identityFields = new Set(["logicalThreadId", "logicalTurnId", "nativeThreadId", "nativeTurnId", "responseId"]);

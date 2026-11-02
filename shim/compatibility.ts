@@ -29,29 +29,79 @@ function stableMessageId(...identity: unknown[]): string {
   return `msg_${createHash("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 32)}`;
 }
 
+function stableUuid(...identity: unknown[]): string {
+  const hex = createHash("sha256").update(JSON.stringify(identity)).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+/** The last ordinary user message, ignoring an injected environment envelope. */
+function lastActiveUserText(input: unknown[]): string {
+  for (let index = input.length - 1; index >= 0; index -= 1) {
+    const item = record(input[index]);
+    if (!item || item.role !== "user") continue;
+    const text = messageText(item).trimStart();
+    if (/^<environment_context\b/i.test(text)) continue;
+    return messageText(item);
+  }
+  return "";
+}
+
+export interface ChatGptWebClientContext {
+  /** OMP keeps its tooling instructions; Pi only needs ownership and its environment. */
+  client: "omp" | "pi";
+  /** Client session id used to derive stable ownership when none is sent (Pi). */
+  sessionId?: string;
+}
+
 export function addCodexEnvironment(
   body: Record<string, unknown>,
   cwd: string,
   headerTurnMetadata?: string,
+  context: ChatGptWebClientContext = { client: "omp" },
 ): string | undefined {
   if (!isAbsolute(cwd)) return undefined;
 
-  const clientMetadata = record(body.client_metadata);
-  if (!clientMetadata) return undefined;
+  const input = Array.isArray(body.input) ? body.input : undefined;
+  if (!input) {
+    console.log("codex-env reject", { stage: "input" });
+    return undefined;
+  }
+
+  let clientMetadata = record(body.client_metadata);
+  if (!clientMetadata) {
+    if (context.client !== "pi") return undefined;
+    clientMetadata = {};
+    body.client_metadata = clientMetadata;
+  }
   const bodyTurnMetadata = clientMetadata["x-codex-turn-metadata"];
   const rawTurnMetadata = typeof bodyTurnMetadata === "string"
     ? bodyTurnMetadata
     : headerTurnMetadata;
-  if (typeof rawTurnMetadata !== "string") {
-    console.log("codex-env reject", { stage: "turn-metadata", clientMetadataKeys: Object.keys(clientMetadata).sort(), bodyTurnMetadataType: typeof bodyTurnMetadata, hasHeaderTurnMetadata: Boolean(headerTurnMetadata) });
-    return undefined;
-  }
-
   let turnMetadata: Record<string, unknown>;
-  try {
-    turnMetadata = record(JSON.parse(rawTurnMetadata)) ?? {};
-  } catch {
-    console.log("codex-env reject", { stage: "turn-metadata-json", rawTurnMetadataLength: rawTurnMetadata.length });
+  if (typeof rawTurnMetadata === "string") {
+    try {
+      turnMetadata = record(JSON.parse(rawTurnMetadata)) ?? {};
+    } catch {
+      console.log("codex-env reject", { stage: "turn-metadata-json", rawTurnMetadataLength: rawTurnMetadata.length });
+      return undefined;
+    }
+  } else if (context.client === "pi") {
+    // Pi sends no native Codex ownership. Derive a stable thread from its session id and a
+    // stable turn from the current user message, so Pi's own retries replay one turn instead
+    // of registering a new one, while a new prompt still starts a new turn.
+    const threadId = stableUuid("pi-thread", context.sessionId ?? cwd);
+    turnMetadata = {
+      thread_id: threadId,
+      session_id: threadId,
+      turn_id: stableUuid("pi-turn", threadId, lastActiveUserText(input)),
+      request_kind: "turn",
+      history_initialization: "new",
+      thread_source: "user",
+      sandbox: "none",
+      sandbox_mode: "danger-full-access",
+    };
+  } else {
+    console.log("codex-env reject", { stage: "turn-metadata", clientMetadataKeys: Object.keys(clientMetadata).sort(), bodyTurnMetadataType: typeof bodyTurnMetadata, hasHeaderTurnMetadata: Boolean(headerTurnMetadata) });
     return undefined;
   }
   const turnId = typeof turnMetadata.turn_id === "string"
@@ -67,12 +117,6 @@ export function addCodexEnvironment(
   turnMetadata.sandbox = "none";
   turnMetadata.workspaces = { [cwd]: {} };
   clientMetadata["x-codex-turn-metadata"] = JSON.stringify(turnMetadata);
-
-  const input = Array.isArray(body.input) ? body.input : undefined;
-  if (!input) {
-    console.log("codex-env reject", { stage: "input" });
-    return undefined;
-  }
 
   // EasyInputMessage omits type/id. Native browser replay needs the same item ID
   // on every tool continuation, retry and later turn containing this history.
@@ -125,6 +169,7 @@ export function addCodexEnvironment(
     "</environment_context>",
   ].join("\n");
 
+  if (context.client === "omp") {
   // Version routing guidance too: retained browser history can otherwise keep
   // the old lead/member wording beside the current instruction.
   const previousBridgeIds = new Set([
@@ -194,6 +239,7 @@ export function addCodexEnvironment(
   if (!input.some(value => record(value)?.id === evidenceInstruction.id)) {
     input.splice(activeUserIndex, 0, evidenceInstruction);
     activeUserIndex += 1;
+  }
   }
 
   const environment = {

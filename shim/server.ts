@@ -220,6 +220,8 @@ Bun.serve({
           const parsed = record(JSON.parse(jsonText));
           if (parsed) {
             const metadata = attachTurnMetadata(parsed, headerTurnMetadata);
+            const cwdClaim = typeof parsed.__omp_cwd === "string" && isAbsolute(parsed.__omp_cwd)
+              ? parsed.__omp_cwd : requestCwd;
             if (ompPath) {
               const labelResponse = taskLabelResponse(parsed);
               if (labelResponse) {
@@ -227,32 +229,37 @@ Bun.serve({
                 finish("local");
                 return labelResponse;
               }
-              const sessionCwd = typeof parsed.__omp_cwd === "string" && isAbsolute(parsed.__omp_cwd)
-                ? parsed.__omp_cwd : requestCwd;
-              delete parsed.__omp_cwd;
               translateToolCallIds(parsed, "to-web");
-              const rewrittenTurnMetadata = sessionCwd
-                ? addCodexEnvironment(parsed, sessionCwd, headerTurnMetadata)
-                : undefined;
-              if (rewrittenTurnMetadata) {
-                jsonText = JSON.stringify(parsed);
-                body = jsonText;
-                // Keep the header projection small; the tool registry belongs in the body.
-                const headerMetadata = JSON.parse(rewrittenTurnMetadata);
-                if (typeof headerMetadata.turn_id === "string") turnId = headerMetadata.turn_id;
-                if (typeof headerMetadata.thread_id === "string" && headerMetadata.thread_id) threadId = headerMetadata.thread_id;
-                const { tool_namespaces_info: _tools, ...headerOnly } = headerMetadata;
-                headers.set("x-codex-turn-metadata", JSON.stringify(headerOnly).replace(
-                  /[\x7f-\uffff]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
-                ));
-              }
-            } else if (metadata) {
+            }
+            delete parsed.__omp_cwd;
+            // A client that names its own cwd (OMP header/body, or Pi's injected cwd) needs the
+            // environment envelope and ownership that the native Codex client would have sent.
+            const rewrittenTurnMetadata = cwdClaim
+              ? addCodexEnvironment(parsed, cwdClaim, headerTurnMetadata, {
+                client: ompPath ? "omp" : "pi",
+                ...(headers.get("session-id") ?? headers.get("session_id")
+                  ? { sessionId: (headers.get("session-id") ?? headers.get("session_id"))! } : {}),
+              })
+              : undefined;
+            if (rewrittenTurnMetadata) {
+              log("request_owned", { client: ompPath ? "omp" : "pi" });
+              jsonText = JSON.stringify(parsed);
+              body = jsonText;
+              // Keep the header projection small; the tool registry belongs in the body.
+              const headerMetadata = JSON.parse(rewrittenTurnMetadata);
+              if (typeof headerMetadata.turn_id === "string") turnId = headerMetadata.turn_id;
+              if (typeof headerMetadata.thread_id === "string" && headerMetadata.thread_id) threadId = headerMetadata.thread_id;
+              const { tool_namespaces_info: _tools, ...headerOnly } = headerMetadata;
+              headers.set("x-codex-turn-metadata", JSON.stringify(headerOnly).replace(
+                /[\x7f-\uffff]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
+              ));
+            } else if (!ompPath && metadata) {
               // Codex CLI keeps its turn metadata in a header. Mirror it into the body so recovery
               // can rebind the same exact turn identity it already presented.
               jsonText = JSON.stringify(parsed);
               body = jsonText;
             }
-            const identity = turnIdentity(metadata);
+            const identity = rewrittenTurnMetadata ? turnIdentity(JSON.parse(rewrittenTurnMetadata)) : turnIdentity(metadata);
             if (identity.threadId) threadId = identity.threadId;
             if (identity.turnId) turnId = identity.turnId;
             logLogicalThreadId = threadId;

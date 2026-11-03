@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { addCodexEnvironment } from "../shim/compatibility";
+import { addCodexEnvironment, isPiCompactionRequest } from "../shim/compatibility";
 
 const promptBody = (text: string) => ({
   model: "chatgpt-web/gpt-5.6-sol",
@@ -40,4 +40,24 @@ test("Pi requests get the environment envelope but never the OMP tooling instruc
 
 test("OMP clients still require native turn metadata", () => {
   expect(addCodexEnvironment(promptBody("hello"), "/repo")).toBeUndefined();
+});
+
+test("a Pi compaction request is detected and still gets synthesized ownership", () => {
+  const compaction = {
+    model: "chatgpt-web/gpt-5.6-sol",
+    store: false,
+    input: [
+      { role: "developer", content: [{ type: "input_text", text: "You are a context summarization assistant. Read the conversation and summarize it." }] },
+      { role: "user", content: [{ type: "input_text", text: "# Conversation\\n[User]: continue the task" }] },
+    ],
+  };
+  expect(isPiCompactionRequest(compaction)).toBe(true);
+  const owned = parse(addCodexEnvironment(compaction, "/tmp/omp-compaction", undefined, { client: "pi" }));
+  expect(owned.thread_id).toMatch(/^[0-9a-f-]{36}$/);
+  expect(owned.turn_id).toMatch(/^[0-9a-f-]{36}$/);
+  expect(owned.request_kind).toBe("turn");
+
+  const ordinary = promptBody("hello");
+  expect(isPiCompactionRequest(ordinary)).toBe(false);
+  expect(addCodexEnvironment(ordinary, "/repo")).toBeUndefined();
 });

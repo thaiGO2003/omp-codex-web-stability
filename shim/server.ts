@@ -18,7 +18,7 @@ async function codexAccessToken(): Promise<string | undefined> {
 }
 import { guardResponseStream, hasCompleteRecoveryInput } from "./sse-watchdog";
 import { RecoveryIdentityStore } from "./sse-watchdog";
-import { record, addCodexEnvironment } from "./compatibility";
+import { record, addCodexEnvironment, isPiCompactionRequest } from "./compatibility";
 import { taskLabelResponse } from "./task-label";
 import { translateToolCallIds, translateResponseStream } from "./tool-call-ids";
 import { DiagnosticLog, errorFields } from "./diagnostics";
@@ -220,8 +220,13 @@ Bun.serve({
           const parsed = record(JSON.parse(jsonText));
           if (parsed) {
             const metadata = attachTurnMetadata(parsed, headerTurnMetadata);
-            const cwdClaim = typeof parsed.__omp_cwd === "string" && isAbsolute(parsed.__omp_cwd)
+            const requestClaim = typeof parsed.__omp_cwd === "string" && isAbsolute(parsed.__omp_cwd)
               ? parsed.__omp_cwd : requestCwd;
+            // Pi compaction requests skip the provider headers entirely. Give them a
+            // stable fallback workspace so ownership is synthesized like any Pi turn.
+            const compactionClaim = !requestClaim && isPiCompactionRequest(parsed)
+              ? (process.env.OMP_COMPACTION_CWD || process.cwd()) : undefined;
+            const cwdClaim = requestClaim ?? (compactionClaim && isAbsolute(compactionClaim) ? compactionClaim : undefined);
             if (ompPath) {
               const labelResponse = taskLabelResponse(parsed);
               if (labelResponse) {

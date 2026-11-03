@@ -46,6 +46,19 @@ function lastActiveUserText(input: unknown[]): string {
   return "";
 }
 
+/** Pi's compaction call bypasses the provider headers: it carries no cwd claim
+ * and no ownership metadata, but its summarization system prompt is unmistakable.
+ * Without synthesized ownership the bridge treats it as a legacy request and
+ * reuses a ChatGPT conversation without a continuation prompt. */
+export function isPiCompactionRequest(body: Record<string, unknown>): boolean {
+  if (!Array.isArray(body.input)) return false;
+  return body.input.some((item) => {
+    const message = record(item);
+    if (!message || message.role !== "developer") return false;
+    return messageText(message).includes("You are a context summarization assistant");
+  });
+}
+
 export interface ChatGptWebClientContext {
   /** OMP keeps its tooling instructions; Pi only needs ownership and its environment. */
   client: "omp" | "pi";

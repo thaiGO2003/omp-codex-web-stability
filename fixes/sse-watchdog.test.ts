@@ -44,6 +44,17 @@ test("fresh owners isolate threads and preserve historical turn metadata", () =>
   expect(request.input[1]).toEqual(current);
 });
 
+test("a retired conversation starts from fresh ownership instead of replaying the cancelled turn", () => {
+  const store = new RecoveryIdentityStore();
+  const first = store.rotate("logical-a", "turn-a");
+  expect(store.resolve("logical-a", "turn-a")).toEqual(first);
+  store.retire("logical-a");
+  expect(store.resolve("logical-a", "turn-a")).toBeUndefined();
+  const fresh = store.rotate("logical-a", "turn-a");
+  expect(fresh.threadId).not.toBe(first.threadId);
+  expect(fresh.turnId).not.toBe(first.turnId);
+});
+
 test("recovery input requires full context with one result for every historical call", () => {
   const call = { type: "function_call", call_id: "call_one", name: "bash", arguments: "{}" };
   const result = { type: "function_call_output", call_id: "call_one", output: "failed: exit 7" };

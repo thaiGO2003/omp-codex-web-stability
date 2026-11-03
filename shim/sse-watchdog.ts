@@ -17,6 +17,13 @@ export class RecoveryIdentityStore {
     return { threadId: owner.threadId, turnId: owner.turnId };
   }
 
+  /** Forget a logical conversation whose native owner was cancelled or abandoned.
+   * The next request for that thread rotates a fresh owner instead of replaying a
+   * turn the bridge still holds active (which it rejects as superseded). */
+  retire(threadId: string) {
+    this.owners.delete(threadId);
+  }
+
   rebind(body: string, headers: Headers, owner: { threadId: string; turnId: string }) {
     const request = JSON.parse(body);
     const client = request.client_metadata;

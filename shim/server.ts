@@ -282,6 +282,12 @@ Bun.serve({
 
     const logicalThreadId = threadId;
     const logicalTurnId = turnId;
+    // A logical turn that the client abandoned must not be replayed into the same
+    // native thread: the bridge cancels that browser turn asynchronously and keeps it
+    // active until settlement, so the next request would be rejected as superseded.
+    const retireOwnership = () => {
+      if (logicalThreadId) recoveryIdentities.retire(logicalThreadId);
+    };
     // Resolve after acquiring the logical queue: another round may have rotated
     // the owner while this request waited. Never attach to that retired session.
     let upstream: Response;
@@ -306,7 +312,44 @@ Bun.serve({
       log("upstream_error", errorFields(error));
       finish("error");
       releaseThread?.();
+      // The client went away before the native turn even answered. Its browser turn
+      // still owns the conversation until the bridge settles it; rotate next time.
+      if (req.signal.aborted) retireOwnership();
       throw error;
+    }
+
+    // The bridge rejects an instruction while another turn for the same conversation
+    // is still live ("A newer Codex instruction superseded this ChatGPT response",
+    // HTTP 499). That happens when the previous owner was cancelled by the client or
+    // by an interrupted stream. Retire it and replay once under fresh ownership so
+    // the client never sees a terminal supersede it will retry into a loop.
+    if (upstream.status === 499 && responsesPath && jsonText !== undefined
+      && logicalThreadId && logicalTurnId && !req.signal.aborted) {
+      const supersededText = await upstream.text().catch(() => "");
+      const supersededHeaders = new Headers(upstream.headers);
+      let replayed = false;
+      log("supersede_detected", { httpStatus: 499 });
+      try {
+        // Scoped cancellation is best effort: fresh ownership alone already avoids the
+        // collision, and an unavailable control channel must not hide the real answer.
+        await interrupt("superseded").catch(error => log("supersede_interrupt_failed", errorFields(error)));
+        const owner = recoveryIdentities.rotate(logicalThreadId, logicalTurnId);
+        body = recoveryIdentities.rebind(jsonText, headers, owner);
+        threadId = owner.threadId;
+        turnId = owner.turnId;
+        upstream = await fetch(upstreamUrl, {
+          method: req.method,
+          headers,
+          body,
+          redirect: "manual",
+          signal: req.signal,
+        });
+        replayed = true;
+        log("supersede_replayed", { httpStatus: upstream.status });
+      } catch (error) {
+        log("supersede_replay_failed", errorFields(error));
+      }
+      if (!replayed) upstream = new Response(supersededText, { status: 499, headers: supersededHeaders });
     }
 
     const isGuardedStream = responsesPath
@@ -399,7 +442,14 @@ Bun.serve({
     const guardNativeStream = (source: ReadableStream<Uint8Array>) => guardResponseStream(source, {
       onDiagnostic: log,
       onStall: () => interrupt("stall"),
-      onCancel: () => interrupt("cancel"),
+      // The downstream disappeared or errored: revoke the browser turn and forget the
+      // owner so a replay starts a new conversation instead of a superseded one.
+      onCancel: async () => {
+        // Retire before the interrupt await: the queued replay must observe the
+        // retirement as soon as the client cancellation releases the thread.
+        retireOwnership();
+        await interrupt("cancel");
+      },
       onRecover: recoverSilently,
     });
     const guardedBody = isGuardedStream && threadId && turnId ? guardNativeStream(upstream.body!) : upstream.body;

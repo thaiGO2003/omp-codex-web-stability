@@ -8,6 +8,7 @@ export const diagnosticEvents = new Set([
   "upstream_headers", "upstream_error", "stream_started", "stream_progress", "stream_terminal", "stream_eof",
   "stream_error", "stream_cancelled", "semantic_timeout", "cleanup_started", "cleanup_completed", "cleanup_failed", "cleanup_retrying",
   "recovery_started", "recovery_lifecycle", "recovery_connecting", "recovery_connect_deferred", "recovery_connected", "recovery_failed", "recovery_stopped", "request_finished",
+  "supersede_detected", "supersede_interrupt_failed", "supersede_replayed", "supersede_replay_failed",
   "submitted_retry_started", "submitted_retry_deferred", "submitted_retry_resumed", "submitted_retry_failed", "submitted_retry_blocked",
 ]);
 const eventTypes = new Set([
